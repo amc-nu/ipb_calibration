@@ -11,24 +11,12 @@ services:
       - $PWD/reference:/root/reference:ro
       # The output of the calibration
       - $PWD/output:/root/output
-      # X11 socket for enabling display of windows from inside the container
-      - /tmp/.X11-unix:/tmp/.X11-unix
 
-    environment:
-      # for enabling window display from inside the container
-      - DISPLAY=${DISPLAY}
-    # The following is needed for allowing 3D view window inside the container.
-    # An nvidia GPU is needed. If no visualization is needed and you have no
-    # nvidia GPU, this can be commented out.
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu, compute,utility,graphics]
+    # Headless CPU-only processing: --visualize writes alignment evidence
+    # (.pcd files) into the output folder instead of opening an interactive
+    # OpenGL window, so no X11 socket, DISPLAY, or NVIDIA GPU is required.
 
-    # the following avoids to start this service if a specific profile is given in docker compose              
+    # the following avoids to start this service if a specific profile is given in docker compose
     profiles:
       - ''
 

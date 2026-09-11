@@ -114,14 +114,10 @@ def estimate_init_lidar_poses(path_data, faro_file, voxel_size=0.1):
 
 
 def load_scan(file):
-    points = np.load(file)
-    if len(points.dtype) >= 1:
-        xyz = np.stack([points["x"], points["y"], points["z"]], axis=-1)
-    else:
-        xyz = points
-    cloud = o3d.geometry.PointCloud()
-    cloud.points = o3d.utility.Vector3dVector(np.asarray(xyz.reshape([-1, 3]), dtype=float))
-    return cloud
+    """Loads a single LiDAR scan. Only x, y, z are used by the calibration,
+    so a .pcd's other fields (intensity, t, reflectivity, ring, ambient, range, ...),
+    if present, are read by Open3D but ignored here."""
+    return o3d.io.read_point_cloud(file)
 
 
 def parse_lidar_data(path_data, max_scanpoints:int=2500):
@@ -140,7 +136,7 @@ def parse_lidar_data(path_data, max_scanpoints:int=2500):
         topic = pcd_topic.replace('/', '')
         folder = join(path_data, topic)
         scans = sorted(glob.glob(
-            f'{folder}/*.npy'))
+            f'{folder}/*.pcd'))
         print('nr scans:', len(scans))
 
         init_p = cfg['init_lidari_to_cam0'][topic]

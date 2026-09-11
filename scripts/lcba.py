@@ -97,11 +97,14 @@ def main(apriltag_file,
                     estimate_bias=bias,
                     estimate_scale=scale)
 
-    results, errors = lcba.optimize(
-        num_iter=100, visualize=visualize)
-
     path_out = Path(join(path_out, experiment_name))
     path_out.mkdir(exist_ok=True, parents=True)
+
+    # Headless: --visualize writes alignment evidence (.pcd files) to
+    # path_out instead of opening an interactive OpenGL window; runs
+    # entirely on CPU, no display/GPU required.
+    results, errors = lcba.optimize(
+        num_iter=100, visualize=visualize, out_dir=str(path_out))
 
     with open(join(path_out, "results.yaml.pkl"), "wb") as f:
         pickle.dump(results, f)
@@ -112,6 +115,21 @@ def main(apriltag_file,
         pickle.dump(errors, f)
     with open(join(path_out, "args.yaml"), "w") as outfile:
         yaml.safe_dump(config, outfile)
+
+    final = lcba.stats["iterations"][-1] if lcba.stats["iterations"] else {}
+    summary = {
+        "converged": lcba.stats.get("converged"),
+        "num_iterations_run": lcba.stats.get("num_iterations_run"),
+        "final_squared_error": final.get("squared_error"),
+        "final_camera_sigma0_pix": final.get("camera_sigma0"),
+        "final_lidar_sigma0_m": final.get("lidar_sigma0"),
+        "iterations": lcba.stats["iterations"],
+    }
+    with open(join(path_out, "summary.yaml"), "w") as outfile:
+        yaml.safe_dump(summary, outfile, default_flow_style=False)
+    print(30*"-")
+    print("Summary:", {k: v for k, v in summary.items() if k != "iterations"})
+    print(30*"-")
 
 
 if __name__ == "__main__":

@@ -1,3 +1,7 @@
+import copy
+from os.path import join
+from pathlib import Path
+
 import yaml
 import ipdb
 from scipy.spatial import KDTree
@@ -9,7 +13,7 @@ from tqdm import tqdm
 from matplotlib import cm
 from ipb_calibration import camera as cd
 from ipb_calibration import lidar as li
-from ipb_calibration.utils import homogenous, update_pose, np2o3d, get_frame
+from ipb_calibration.utils import homogenous, update_pose, np2o3d
 
 
 def prior_error(T_est, T_prior):
@@ -47,43 +51,6 @@ def transform(points, T_cam_map=np.eye(4), T_os_cam=np.eye(4)):
 
     points_t = (T_cam_map @ T_os_cam @ points.T).T
     return points_t
-
-
-def rays2o3d(ray_img, T_cami_cam, T_cam_map, apriltag_coords, ray2apriltag_idx=None, scale=1.1):
-    geoms = []
-    point_colors = cm.get_cmap("Paired")(
-        np.linspace(0, 1, len(apriltag_coords)))[:, :3]
-    for c, (T_c, ray_c) in enumerate(zip(T_cami_cam, ray_img)):
-        for t, (T_w, ray_w) in enumerate(zip(T_cam_map, ray_c)):
-            T = T_w @ T_c
-            geoms.append(get_frame(T))
-
-            if len(ray_w) > 0:
-                ls = o3d.geometry.LineSet()
-                origin = np.zeros([4, 1])
-                origin[-1] = 1
-                origin = T @ origin
-
-                endpoints = T @ homogenous(ray_w * scale).T
-                scale *= np.linalg.norm(apriltag_coords-origin[:3].T, axis=-1).max() / \
-                    np.linalg.norm(endpoints[:3]-origin[:3], axis=0).min()
-
-                endpoints = T @ homogenous(ray_w * scale).T
-
-                points = np.concatenate([endpoints, origin], axis=-1).T
-                ls.points = o3d.utility.Vector3dVector(points[:, :3])
-
-                idx = np.stack([np.arange(len(ray_w)), np.full(
-                    len(ray_w), len(ray_w))], axis=-1).astype(np.int64)
-
-                ls.lines = o3d.utility.Vector2iVector(idx)
-
-                if ray2apriltag_idx is not None:
-                    ls.colors = o3d.utility.Vector3dVector(
-                        point_colors[ray2apriltag_idx[c][t]])
-
-                geoms.append(ls)
-    return geoms
 
 
 def points2o3d(lidar_points, T_lidar_cam, T_cam_map):
@@ -252,32 +219,36 @@ class LCBundleAdjustment:
             estimate_scale=estimate_scale)
         ) for i in range(self.num_lidar)]
 
-    def visualize(self):
-        geoms = [self.ref_map]
-        if self.num_lidar > 0:
-            cm_ = cm.get_cmap("viridis")
-            for scans, lidar in zip(self.points, self.lidars):
-                for t, scan in enumerate(scans):
-                    pt = np2o3d(lidar.scan2world(scan, self.T_cam_map[t]))
-                    pt.paint_uniform_color(cm_(t/len(scans))[:3])
-                    geoms.append(pt)
+    def visualize(self, out_dir=None, tag=""):
+        """Headless alignment evidence: writes the reference map plus every
+        transformed LiDAR scan (colored by timestamp) as one merged .pcd
+        file, instead of opening an interactive OpenGL window. Runs fully
+        on CPU, no display/GPU required.
 
-        if self.num_cameras > 0:
-            rays = []
-            T_cami_cam = []
-            for c, i_c in enumerate(self.p_img):
-                cam = self.cameras[c]
-                T_cami_cam.append(cam.T_cam_ref)
+        ponytail: camera ray/frame geometry (rays2o3d) is dropped here —
+        it mixes point clouds, line sets and meshes, which can't be merged
+        into one file as simply as point clouds can. Add a separate
+        per-camera .ply export if that evidence is needed too.
+        """
+        if out_dir is None or self.num_lidar == 0:
+            return
 
-                rays_c = []
-                for t, x_i in enumerate(i_c):
-                    r = cam.pix2ray(x_i)
-                    rays_c.append(r)
-                rays.append(rays_c)
+        combined = o3d.geometry.PointCloud()
+        ref = copy.deepcopy(self.ref_map)
+        ref.paint_uniform_color([0.5, 0.5, 0.5])
+        combined += ref
 
-            geoms += rays2o3d(rays, T_cami_cam, self.T_cam_map,
-                              self.apriltag_coords, self.ray2apriltag_idx)
-        o3d.visualization.draw_geometries(geoms)
+        cm_ = cm.get_cmap("viridis")
+        for scans, lidar in zip(self.points, self.lidars):
+            for t, scan in enumerate(scans):
+                pt = np2o3d(lidar.scan2world(scan, self.T_cam_map[t]))
+                pt.paint_uniform_color(cm_(t/len(scans))[:3])
+                combined += pt
+
+        Path(out_dir).mkdir(parents=True, exist_ok=True)
+        out_file = join(out_dir, f"lidar_alignment_{tag}.pcd")
+        o3d.io.write_point_cloud(out_file, combined)
+        print(f"Wrote alignment evidence: {out_file}")
 
     def _add_ray_obs(self, N, g):
         # Add Image observations
@@ -328,7 +299,8 @@ class LCBundleAdjustment:
         errors = np.concatenate(errors)
         errors_all = np.concatenate(errors_all)
         self.ray_mad = np.median(np.abs(errors_all)) * 1.4826
-        print("Cameras: sigma0", (s0_sq/(num_observations-self.num_params))**0.5)
+        self.cam_sigma0 = float(np.squeeze((s0_sq/(num_observations-self.num_params))**0.5))
+        print("Cameras: sigma0", self.cam_sigma0)
         print(
             f"Camera: Outliers: {num_invalids/(num_observations)*100:.2f}%")
         return s0_sq.sum()
@@ -392,8 +364,9 @@ class LCBundleAdjustment:
                 num_observations += num_points
 
                 self.errors[f"lidar_{l}"][t] = error
-        print("LiDAR: sigma0", (s0_points_sq /
-              (num_observations-self.num_params))**0.5)
+        self.lidar_sigma0 = float(np.squeeze((s0_points_sq /
+              (num_observations-self.num_params))**0.5))
+        print("LiDAR: sigma0", self.lidar_sigma0)
         return s0_points_sq.sum()
 
     def _add_apriltag_priors(self, N, g):
@@ -473,9 +446,10 @@ class LCBundleAdjustment:
         out["frameposes"] = {"poses": poses, "cov": pose_cov}
         return out
 
-    def optimize(self, num_iter=50, visualize=False):
+    def optimize(self, num_iter=50, visualize=False, out_dir=None):
+        self.stats = {"iterations": []}
         if visualize:
-            self.visualize()
+            self.visualize(out_dir=out_dir, tag="initial")
 
         for i in tqdm(range(num_iter)):
             # Param Order: t_w, r_w, t_c, r_c, t_l, r_l, p
@@ -492,6 +466,13 @@ class LCBundleAdjustment:
                 s0 += self._add_lidar_obs(N, g)
             s0 = s0.squeeze()
             print(f"squared Error: {s0:.5}")
+            self.stats["iterations"].append({
+                "iter": i,
+                "squared_error": float(s0),
+                "camera_sigma0": getattr(self, "cam_sigma0", None),
+                "lidar_sigma0": getattr(self, "lidar_sigma0", None),
+                "robust_kernel": not self.final_step,
+            })
 
             # Solve
             cov = np.linalg.inv(N)
@@ -520,8 +501,10 @@ class LCBundleAdjustment:
                     break
                 print("!!! without robust kernel", i)
                 self.final_step = True
+        self.stats["num_iterations_run"] = i + 1
+        self.stats["converged"] = bool(self.converged and self.final_step)
         if visualize:
-            self.visualize()
+            self.visualize(out_dir=out_dir, tag="final")
         print(self.cameras)
         print(self.lidars)
         return self.result2dict(cov), self.errors
