@@ -1,3 +1,6 @@
+import csv
+from pathlib import Path
+
 import numpy as np
 import apriltag
 import ipdb
@@ -11,19 +14,43 @@ def compute_border_threshold(corners):
     return max_diag / 2**0.5 / 8
 
 
+_CORNER_COLS = ("top_left", "top_right", "bottom_right", "bottom_left")
+
+
 class Apriltags:
     def __init__(self, file) -> None:
         self.detector = apriltag.apriltag("tag36h11")
         max_num_tags = 587
 
-        apriltags = np.loadtxt(file, skiprows=1).reshape(-1, 4, 4)
-        self.apriltag_coords = apriltags[:, :, 1:]
+        if Path(file).suffix.lower() == ".csv":
+            self.apriltag_ids, self.apriltag_coords = self._load_csv(file)
+        else:
+            apriltags = np.loadtxt(file, skiprows=1).reshape(-1, 4, 4)
+            self.apriltag_coords = apriltags[:, :, 1:]
+            self.apriltag_ids = (apriltags[:, 0, 0]/100).astype("int")
 
-        self.apriltag_ids = (apriltags[:, 0, 0]/100).astype("int")
         self.tag_id2list_idx = np.full(
             max_num_tags, fill_value=max_num_tags, dtype=np.int64)
         self.tag_id2list_idx[self.apriltag_ids] = np.arange(
             len(self.apriltag_ids))
+
+    @staticmethod
+    def _load_csv(file):
+        """Reads a reference/apriltag_coords.csv-style file (tag_id + the
+        surveyed 3D corners, columns top_left/top_right/bottom_right/
+        bottom_left). Reordered to top_left, top_right, bottom_left,
+        bottom_right to match process_detection's corner convention."""
+        ids = []
+        coords = []
+        with open(file, newline="") as f:
+            for row in csv.DictReader(f):
+                ids.append(int(row["tag_id"]))
+                tl, tr, br, bl = ([float(row[f"{col}_x_3d"]),
+                                  float(row[f"{col}_y_3d"]),
+                                  float(row[f"{col}_z_3d"])]
+                                 for col in _CORNER_COLS)
+                coords.append([tl, tr, bl, br])
+        return np.array(ids), np.array(coords)
 
     def process_detection(self, detection, img):
         list_idx = self.tag_id2list_idx[detection["id"]]

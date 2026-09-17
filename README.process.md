@@ -51,7 +51,7 @@ explicitly (`lc_bundle_adjustment.py:103-527`).
   `CMD` runs `/root/entrypoint.bash`, which invokes:
   ```bash
   python3 calib/scripts/lcba.py \
-      --faro_file reference/reference_pointcloud.ply \
+      --map-path reference/reference_pointcloud.ply \
       --apriltag_file reference/apriltag_coords.txt \
       --path_data input \
       --path_out output \
@@ -79,7 +79,7 @@ explicitly (`lc_bundle_adjustment.py:103-527`).
 | Host path | Container path | Mode | Purpose |
 |---|---|---|---|
 | `$PWD/input` | `/root/input` | read-only | Recorded per-camera images and per-LiDAR scans, plus `calibration.yaml` |
-| `$PWD/reference` | `/root/reference` | read-only | Reference point cloud (`.ply`) and AprilTag ground-truth coordinates (`.txt`) |
+| `$PWD/reference` | `/root/reference` | read-only | Reference point cloud (`.ply`, or a directory of `.pcd` scans to concatenate) and AprilTag ground-truth coordinates (`.txt` or `.csv`) |
 | `$PWD/output` | `/root/output` | read-write | Calibration results, logs, and (with `--visualize`) alignment-evidence `.pcd` files |
 
 No X11 socket or `DISPLAY` forwarding is needed for `systemcalib` — see §12.
@@ -88,9 +88,9 @@ No X11 socket or `DISPLAY` forwarding is needed for `systemcalib` — see §12.
 
 | Option | Short | Type / default | Meaning |
 |---|---|---|---|
-| `--apriltag_file` | `-a` | `str` | `.txt` file with AprilTag ID + 3D coordinates (see §3) |
-| `--path_data` | `-p` | `str` | Directory with `calibration.yaml` and the per-topic image/scan folders |
-| `--faro_file` | `-f` | `str` | `.ply` reference point cloud (the "Faro" TLS scan) |
+| `--apriltag_file` | `-a` | `str` | `.txt` or `.csv` file with AprilTag ID + 3D coordinates (see §3). Ignored for an Isaac Sim capture directory (ground truth comes from its `gt/apriltag_*.csv` files instead) |
+| `--path_data` | `-p` | `str` | Directory with `calibration.yaml` and the per-topic image/scan folders — or an Isaac Sim capture directory (`config.yaml` + `camera/`/`lidar/`/`gt/`), auto-detected |
+| `--map-path` | `-m` | `str` | Reference point cloud: a single `.ply`/`.pcd` file, or a directory of `.pcd` scans concatenated into one map (the "Faro" TLS scan, renamed from `--faro_file`) |
 | `--path_out` | `-o` | `str` | Output root directory |
 | `--std_pix` | `-sp` | `float`, `0.2` | Assumed std. dev. of AprilTag corner detection in pixels — weights the reprojection error term |
 | `--std_apriltags` | `-sa` | `float`, `0.002` | Assumed std. dev. (m) of the surveyed AprilTag corner coordinates — weights the AprilTag prior term |
@@ -107,13 +107,24 @@ No environment variables are read by `lcba.py` itself.
 
 ## 3. Input File Specifications
 
-### 3.1 `--apriltag_file` — AprilTag ground-truth coordinates (`.txt`)
+### 3.1 `--apriltag_file` — AprilTag ground-truth coordinates (`.txt` or `.csv`)
 
-- **Identifier**: plain-text, whitespace-delimited, e.g.
-  `reference/apriltag_coords.txt`. Parsed by
-  `Apriltags.__init__` (`apriltag.py:14-26`) via
-  `np.loadtxt(file, skiprows=1).reshape(-1, 4, 4)`.
-- **Schema**:
+- **Identifier**: `Apriltags.__init__` (`apriltag.py`) branches on the file
+  extension:
+  - `.txt`: plain-text, whitespace-delimited, e.g.
+    `reference/apriltag_coords.txt`. Parsed via
+    `np.loadtxt(file, skiprows=1).reshape(-1, 4, 4)` (schema below).
+  - `.csv`: a reference-style table with a header row and columns `tag_id`,
+    `top_left_x_3d`, `top_left_y_3d`, `top_left_z_3d`,
+    `top_right_x_3d`/`y`/`z`, `bottom_right_x_3d`/`y`/`z`,
+    `bottom_left_x_3d`/`y`/`z` (`Apriltags._load_csv`) — the same 3D-corner
+    column names/order as the Isaac `gt/apriltag_<frame_id>.csv` format
+    (§below), minus the per-frame/camera columns that don't apply to a
+    static survey table. Both formats are reordered internally to the same
+    corner convention and produce numerically identical
+    `apriltag_coords`/`apriltag_ids` — `reference/apriltag_coords.csv` here
+    is a verified 1:1 conversion of `reference/apriltag_coords.txt`.
+- **`.txt` schema**:
   - Line 1: a single integer header (total row count — read but not used
     for parsing logic since `skiprows=1` just skips it).
   - Every subsequent group of **4 consecutive rows** describes one AprilTag's
@@ -140,12 +151,14 @@ No environment variables are read by `lcba.py` itself.
   8204 -2.87271 -1.21236  0.06152
   ```
 
-### 3.2 `--faro_file` — reference point cloud (`.ply`)
+### 3.2 `--map-path` — reference point cloud (`.ply`/`.pcd`, or a directory of `.pcd`)
 
-- **Identifier**: Open3D-readable point cloud file, e.g.
-  `reference/reference_pointcloud.ply`. Loaded once in
-  `main()` via `o3d.io.read_point_cloud(faro_file)` (`lcba.py:57`).
-- **Schema**: standard PLY point cloud (XYZ, optionally normals/colors — if
+- **Identifier**: `pp.load_reference_map(map_path)` (`ipb_preprocessing.py`,
+  called from `main()`): a directory concatenates every `.pcd` inside it
+  into one cloud; anything else (typically
+  `reference/reference_pointcloud.ply`) is read directly via
+  `o3d.io.read_point_cloud`.
+- **Schema**: standard PLY/PCD point cloud (XYZ, optionally normals/colors — if
   normals are absent they are estimated on the fly,
   `lc_bundle_adjustment.py:240-242`).
 - **Purpose**: the static, high-accuracy "world" surface that LiDAR scans
@@ -243,8 +256,8 @@ Trace of `main()` in `scripts/lcba.py:39-114`:
 
 1. **`config = locals()`** (`lcba.py:53`) — snapshots every CLI argument for
    later provenance logging (`args.yaml`).
-2. **Load reference point cloud** (`lcba.py:57`):
-   `pcd_map = o3d.io.read_point_cloud(faro_file)`.
+2. **Load reference point cloud**:
+   `pcd_map = pp.load_reference_map(map_path)`.
 3. **Parse camera data** (`lcba.py:58-59`,
    `ipb_preprocessing.parse_camera_data`, `ipb_preprocessing.py:261-337`):
    - Builds an `Apriltags` detector from `apriltag_file`.
@@ -384,7 +397,7 @@ uncaught Python exceptions and a non-zero process exit code.
 
 ```mermaid
 graph TD
-    A[CLI args via click] --> B["Load reference map<br/>(faro_file .ply)"]
+    A[CLI args via click] --> B["Load reference map<br/>(map_path .ply/.pcd)"]
     B --> C["parse_camera_data<br/>(apriltag_file, path_data)"]
     C --> D["estimate_initial_k<br/>(per-camera K, distortion via OpenCV)"]
     D --> E["estimate_initial_guess<br/>(PnP-RANSAC -&gt; T_cam_map, T_cami_cam)"]

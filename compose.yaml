@@ -9,6 +9,11 @@ services:
       - $PWD/input:/root/input:ro
       # The folder with the reference data: room scan and apriltag coords
       - $PWD/reference:/root/reference:ro
+      # Isaac Sim capture layout (config.yaml + camera/ + lidar/ + gt/),
+      # precomputed from input/ + reference/ via
+      # scripts/convert_input_to_isaac_format.py (entrypoint.bash has the
+      # commented-out command to regenerate it).
+      - $PWD/isaac_format:/root/isaac_format
       # The output of the calibration
       - $PWD/output:/root/output
 
@@ -41,8 +46,8 @@ services:
 
     # Don't use this service per default. Only use it in profile "apriltag_extraction"
     # e.g. with docker compose --profile apriltag_extraction up --build
-    profiles:
-      - apriltag_extraction
+    # profiles:
+    #   - apriltag_extraction
 
 
 #    # Start it interactively

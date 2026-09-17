@@ -1,5 +1,7 @@
 from numpy.linalg import norm, inv
 import copy
+import csv
+import re
 import ipdb
 import cv2
 from scipy.spatial.transform import Rotation
@@ -118,6 +120,19 @@ def load_scan(file):
     so a .pcd's other fields (intensity, t, reflectivity, ring, ambient, range, ...),
     if present, are read by Open3D but ignored here."""
     return o3d.io.read_point_cloud(file)
+
+
+def load_reference_map(map_path):
+    """Loads the reference map. A directory is treated as a set of .pcd
+    scans to concatenate into one cloud; anything else is read directly
+    (e.g. a single .ply or .pcd file)."""
+    path = Path(map_path)
+    if path.is_dir():
+        pcd = o3d.geometry.PointCloud()
+        for f in sorted(path.glob("*.pcd")):
+            pcd += load_scan(str(f))
+        return pcd
+    return o3d.io.read_point_cloud(str(path))
 
 
 def parse_lidar_data(path_data, max_scanpoints:int=2500):
@@ -254,6 +269,150 @@ def estimate_initial_guess(observations, cam_is_pinhole, init_K=None, dist_coeff
     return T_cam0_map_t, T_cami_cam0
 
 
+def index_apriltag_observations(observations, seen_tags):
+    """Builds the per-tag-corner 3D coords array and the [camera][frame]
+    pixel/index lists BA consumes, from a {tag_id: coords[4,3]} lookup and
+    per (camera, frame) lists of {"tag_id", "corners"[4,2], "coords"[4,3]}
+    detections. Shared by the image-detection and CSV-ground-truth paths."""
+    tag, coords = np.fromiter(
+        seen_tags.keys(), dtype=np.int64), np.stack([*seen_tags.values()])
+    coords = coords.reshape([-1, 3])
+    tag2indx = np.full([tag.max()+1, 4], -1)
+    tag2indx[tag] = np.arange(len(tag)*4).reshape([-1, 4])
+
+    indices = []
+    imgpixel = []
+    for c, c_obs in enumerate(observations):
+        c_ind = []
+        c_img = []
+        for t, t_obs in enumerate(c_obs):
+            if len(t_obs) > 0:
+                img_pixel = np.concatenate(
+                    [d["corners"] for d in t_obs], axis=0)
+                idx = tag2indx[[d["tag_id"] for d in t_obs]].reshape(-1)
+            else:
+                img_pixel = np.zeros([0, 2])
+                idx = np.zeros([0])
+            c_ind.append(idx)
+            c_img.append(img_pixel)
+
+        imgpixel.append(c_img)
+        indices.append(c_ind)
+    return imgpixel, indices, coords
+
+
+###################################################################################################
+# Isaac Sim capture format (calibration_room.py output: config.yaml + camera/ + lidar/ + gt/)
+###################################################################################################
+
+_CORNER_COLS = ("top_left", "top_right", "bottom_right", "bottom_left")
+
+
+def parse_isaac_camera_data(path_data):
+    """Reads a calibration_room.py capture (config.yaml + gt/apriltag_<frame_id>.csv)
+    in place of running AprilTag detection on images: the CSV already has each
+    camera's projected 2D corners and the corresponding surveyed 3D corners, so
+    there is no image loading/detection step. Also returns the exact intrinsics
+    from config.yaml (synthetic ground truth) instead of estimating them."""
+    cfg = yaml.safe_load(open(join(path_data, "config.yaml")))
+    cameras_cfg = cfg["cameras"]
+    camera_names = [c["sensor_name"] for c in cameras_cfg]
+    num_cams = len(cameras_cfg)
+
+    cam_is_pinhole = [c.get("model", "pinhole") ==
+                      "pinhole" for c in cameras_cfg]
+    img_sizes = np.array([[c["resolution"]["width"], c["resolution"]["height"]]
+                          for c in cameras_cfg])
+
+    init_k = []
+    init_coeff = []
+    for c in cameras_cfg:
+        intr = c["intrinsics"]
+        init_k.append([intr["cx"], intr["cy"], intr["fx"], intr["fy"]])
+        if c.get("model", "pinhole") == "pinhole":
+            dist = c.get("distortion") or {}
+            init_coeff.append(np.array([dist.get(k, 0.0) for k in
+                                        ("k1", "k2", "p1", "p2", "k3", "k4", "k5", "k6")]))
+        else:
+            # fisheye: CVDistortionModel isn't the fisheye model, so start
+            # from zero and let BA estimate the correction (same as the
+            # legacy image-detection path does for fisheye cameras).
+            init_coeff.append(np.zeros(5))
+    init_k = np.array(init_k)
+
+    csv_files = sorted(
+        glob.glob(join(path_data, "gt", "apriltag_*.csv")),
+        key=lambda f: int(re.search(r"(\d+)$", Path(f).stem).group(1)))
+
+    seen_tags = {}
+    observations = [[] for _ in range(num_cams)]
+    for csv_file in csv_files:
+        frame_rows = {name: [] for name in camera_names}
+        with open(csv_file, newline="") as f:
+            for row in csv.DictReader(f):
+                name = row["sensor_name"]
+                if name not in frame_rows:
+                    continue
+                tag_id = int(row["tag_id"])
+                corners = np.array([[float(row[f"{col}_x_2d"]), float(row[f"{col}_y_2d"])]
+                                    for col in _CORNER_COLS])
+                coords = np.array([[float(row[f"{col}_x_3d"]), float(row[f"{col}_y_3d"]), float(row[f"{col}_z_3d"])]
+                                   for col in _CORNER_COLS])
+                seen_tags.setdefault(tag_id, coords)
+                frame_rows[name].append(
+                    {"tag_id": tag_id, "corners": corners, "coords": coords})
+        for c, name in enumerate(camera_names):
+            observations[c].append(frame_rows[name])
+
+    imgpixel, indices, coords = index_apriltag_observations(
+        observations, seen_tags)
+    return (imgpixel, indices, coords, observations, cam_is_pinhole,
+            init_k, init_coeff, img_sizes, camera_names)
+
+
+def parse_isaac_lidar_data(path_data, max_scanpoints: int = 2500):
+    """Reads calibration_room.py's lidar/<sensor_name>_<frame_id>_<coords>.pcd
+    captures. Initial lidar-to-cam0 extrinsics come from config.yaml's fixed
+    base_link-relative sensor mounting offsets (same role as calibration.yaml's
+    init_lidari_to_cam0 in the legacy format): both cameras and lidars mount
+    rigidly to base_link, so cam0's and a lidar's base_link offsets alone give
+    a time-invariant lidar-to-cam0 transform, with no need for per-frame
+    base_link pose (camera poses per frame are instead recovered by PnP, same
+    as the legacy path)."""
+    cfg = yaml.safe_load(open(join(path_data, "config.yaml")))
+    lidar_names = [l["sensor_name"] for l in cfg["lidars"]]
+    cam0_name = cfg["cameras"][0]["sensor_name"]
+    base_sensors = cfg["base_link"]["sensors"]
+
+    def sensor_pose(name):
+        s = base_sensors[name]
+        return xyz_rxryrz2pose([s["x"], s["y"], s["z"]],
+                               [s["roll"], s["pitch"], s["yaw"]])
+
+    T_cam0_base = sensor_pose(cam0_name)
+    T_os_cam = [inv(T_cam0_base) @ sensor_pose(name) for name in lidar_names]
+
+    folder = join(path_data, "lidar")
+    lidar_points = []
+    for name in lidar_names:
+        pattern = re.compile(rf"^{re.escape(name)}_(\d+)_")
+        scans = sorted(glob.glob(join(folder, f"{name}_*.pcd")),
+                       key=lambda f: int(pattern.match(Path(f).name).group(1)))
+        print('nr scans:', len(scans))
+
+        pcds = []
+        for scanf in tqdm.tqdm(scans):
+            scan = load_scan(scanf)
+            if max_scanpoints > 0:
+                ratio = max_scanpoints/len(scan.points)
+                if ratio > 1:
+                    ratio = 1
+                scan = scan.random_down_sample(ratio)
+            pcds.append(scan)
+        lidar_points.append(pcds)
+    return lidar_points, T_os_cam, lidar_names
+
+
 def parse_camera_data(apriltag_file, path_data):
     april = Apriltags(apriltag_file)
     cfg = yaml.safe_load(open(join(path_data, "calibration.yaml")))
@@ -290,31 +449,9 @@ def parse_camera_data(apriltag_file, path_data):
             init_c[:3, -1] += init_p[3:]
             T_cami_cam0.append(init_c)
 
-    tag, coords = np.fromiter(
-        seen_tags.keys(), dtype=np.int64), np.stack([*seen_tags.values()])
-    coords = coords.reshape([-1, 3])
-    tag2indx = np.full([tag.max()+1, 4], -1)
-    tag2indx[tag] = np.arange(len(tag)*4).reshape([-1, 4])
+    imgpixel, indices, coords = index_apriltag_observations(
+        observations, seen_tags)
 
-    indices = []
-    imgpixel = []
-    for c, c_obs in enumerate(observations):
-        c_ind = []
-        c_img = []
-        for t, t_obs in enumerate(c_obs):
-            if len(t_obs) > 0:
-                img_pixel = np.concatenate(
-                    [d["corners"] for d in t_obs], axis=0)
-                idx = tag2indx[[d["tag_id"] for d in t_obs]].reshape(-1)
-            else:
-                img_pixel = np.zeros([0, 2])
-                idx = np.zeros([0])
-            c_ind.append(idx)
-            c_img.append(img_pixel)
-
-        imgpixel.append(c_img)
-        indices.append(c_ind)
-    
     # Take a look if user has given camera model in yaml file
     if 'camera_models' in cfg.keys():
         cam_is_pinhole = [m == 'pinhole' for m in cfg['camera_models']]

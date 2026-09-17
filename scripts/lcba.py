@@ -1,6 +1,5 @@
 import collections
 import pickle
-import open3d as o3d
 from ipb_calibration import lc_bundle_adjustment as ba
 from pathlib import Path
 import yaml
@@ -22,9 +21,9 @@ def convert_dict(d, u=None):
 
 
 @click.command()
-@click.option("--apriltag_file", "-a", type=str, help=".txt File with the apriltag coordinates. Each column should contain the apriltag id and the 3d coordinate.")
-@click.option("--path_data", "-p", type=str, help="Path to the data directory. Directory should contain the calibration.yaml file as well as the folders with the recorded calibration data.")
-@click.option("--faro_file", "-f", type=str, help=".ply file of the reference point cloud map.")
+@click.option("--apriltag_file", "-a", type=str, help="File with the surveyed apriltag coordinates: either the legacy .txt (tag id + 3d corner, 4 rows/tag) or a reference-style .csv (tag_id + top_left/top_right/bottom_right/bottom_left_{x,y,z}_3d columns). Ignored for an Isaac Sim capture (path_data containing config.yaml): apriltag ground truth is read instead from that directory's gt/apriltag_<frame_id>.csv files.")
+@click.option("--path_data", "-p", type=str, help="Path to the data directory. Either an ipb calibration.yaml-style directory, or an Isaac Sim calibration_room.py capture directory (contains config.yaml, camera/, lidar/, gt/).")
+@click.option("--map-path", "-m", "map_path", type=str, help="Reference point cloud map: a single .ply/.pcd file, or a directory of .pcd files to concatenate into one map.")
 @click.option("--path_out", "-o", type=str, help="Directory in which the results will be stored.")
 @click.option("--std_pix", "-sp", default=0.2, help="Standard deviation of the apriltag detection in the image [pix]. (default=0.2)")
 @click.option("--std_apriltags", "-sa", default=0.002, help="Standard deviation of the 3D coordinates of the Apriltags.(default=0.002)")
@@ -38,7 +37,7 @@ def convert_dict(d, u=None):
 @click.option("--visualize/--no-visualize", default=False, help="Flag if the initial guess and the final optimization should be visualized. (default=False)")
 def main(apriltag_file,
          path_data,
-         faro_file,
+         map_path,
          path_out,
          std_pix,
          std_apriltags,
@@ -54,12 +53,28 @@ def main(apriltag_file,
     print(30*"-")
     print(10*"-", experiment_name, 10*"-")
     print(30*"-")
-    pcd_map = o3d.io.read_point_cloud(faro_file)
-    imgpixel, indices, coords, observations, T_cami_cam_yaml, img_sizes, cam_is_pinhole = pp.parse_camera_data(
-        apriltag_file, path_data)
+    pcd_map = pp.load_reference_map(map_path)
 
-    init_k, init_coeff = pp.estimate_initial_k(
-        observations, cam_is_pinhole, max_num_images=10, image_size=img_sizes)
+    isaac_format = (Path(path_data) / "config.yaml").exists()
+
+    if isaac_format:
+        print("Detected Isaac Sim capture format (config.yaml found)")
+        (imgpixel, indices, coords, observations, cam_is_pinhole,
+         init_k, init_coeff, img_sizes, camera_names) = pp.parse_isaac_camera_data(path_data)
+        lidar_points, T_os_cam, lidar_names = pp.parse_isaac_lidar_data(
+            path_data, max_scanpoints)
+        cfg = {"image_topics": camera_names, "point_cloud_topics": lidar_names}
+    else:
+        if not apriltag_file:
+            raise click.UsageError(
+                "--apriltag_file is required unless path_data is an Isaac Sim capture (must contain config.yaml)")
+        imgpixel, indices, coords, observations, T_cami_cam_yaml, img_sizes, cam_is_pinhole = pp.parse_camera_data(
+            apriltag_file, path_data)
+        init_k, init_coeff = pp.estimate_initial_k(
+            observations, cam_is_pinhole, max_num_images=10, image_size=img_sizes)
+        # Initial guess for Lidar
+        lidar_points, T_os_cam, cfg = pp.parse_lidar_data(path_data, max_scanpoints)
+
     init_K = [np.array([[k_[2], 0, k_[0]],
                         [0, k_[3], k_[1]],
                         [0, 0, 1]]) for k_ in init_k]
@@ -68,10 +83,7 @@ def main(apriltag_file,
 
     T_cam_map, T_cami_cam = pp.estimate_initial_guess(
         observations, cam_is_pinhole, init_K=init_K, dist_coeff=init_coeff)
-    
-    # Initial guess for Lidar
-    lidar_points, T_os_cam, cfg = pp.parse_lidar_data(path_data, max_scanpoints)
-    
+
     # Execute BA
     lcba = ba.LCBundleAdjustment(ref_map=pcd_map,
                                  num_poses=len(T_cam_map),
