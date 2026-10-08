@@ -53,9 +53,9 @@ explicitly (`lc_bundle_adjustment.py:103-527`).
   python3 calib/scripts/lcba.py \
       --map-path reference/reference_pointcloud.ply \
       --apriltag_file reference/apriltag_coords.txt \
-      --path_data input \
-      --path_out output \
-      --experiment_name result1 | tee output/result1.log
+      --data-path input \
+      --out-path output \
+      --experiment-name result1 | tee output/result1.log
   ```
   stdout/stderr are teed to `output/result1.log`.
 - **Compose service** (`compose.yaml:3-24`, service `systemcalib`): builds
@@ -79,7 +79,7 @@ explicitly (`lc_bundle_adjustment.py:103-527`).
 | Host path | Container path | Mode | Purpose |
 |---|---|---|---|
 | `$PWD/input` | `/root/input` | read-only | Recorded per-camera images and per-LiDAR scans, plus `calibration.yaml` |
-| `$PWD/reference` | `/root/reference` | read-only | Reference point cloud (`.ply`, or a directory of `.pcd` scans to concatenate) and AprilTag ground-truth coordinates (`.txt` or `.csv`) |
+| `$PWD/reference` | `/root/reference` | read-only | Reference point cloud (`.ply`, or a directory of `*_global.pcd` scans to concatenate) and AprilTag ground-truth coordinates (`.txt` or `.csv`) |
 | `$PWD/output` | `/root/output` | read-write | Calibration results, logs, and (with `--visualize`) alignment-evidence `.pcd` files |
 
 No X11 socket or `DISPLAY` forwarding is needed for `systemcalib` — see §12.
@@ -89,9 +89,9 @@ No X11 socket or `DISPLAY` forwarding is needed for `systemcalib` — see §12.
 | Option | Short | Type / default | Meaning |
 |---|---|---|---|
 | `--apriltag_file` | `-a` | `str` | `.txt` or `.csv` file with AprilTag ID + 3D coordinates (see §3). Ignored for an Isaac Sim capture directory (ground truth comes from its `gt/apriltag_*.csv` files instead) |
-| `--path_data` | `-p` | `str` | Directory with `calibration.yaml` and the per-topic image/scan folders — or an Isaac Sim capture directory (`config.yaml` + `camera/`/`lidar/`/`gt/`), auto-detected |
-| `--map-path` | `-m` | `str` | Reference point cloud: a single `.ply`/`.pcd` file, or a directory of `.pcd` scans concatenated into one map (the "Faro" TLS scan, renamed from `--faro_file`) |
-| `--path_out` | `-o` | `str` | Output root directory |
+| `--data-path` | `-p` | `str` | Directory with `calibration.yaml` and the per-topic image/scan folders — or an Isaac Sim capture directory (`config.yaml` + `camera/`/`lidar/`/`gt/`), auto-detected (cameras: ROS camera_info or `intrinsics`/`distortion`; `rotational_units` honoured) |
+| `--map-path` | `-m` | `str` | Reference point cloud: a single `.ply`/`.pcd` file, or a directory of `*_global.pcd` scans (other `.pcd` files ignored) concatenated into one map (the "Faro" TLS scan, renamed from `--faro_file`) |
+| `--out-path` | `-o` | `str` | Output root directory |
 | `--std_pix` | `-sp` | `float`, `0.2` | Assumed std. dev. of AprilTag corner detection in pixels — weights the reprojection error term |
 | `--std_apriltags` | `-sa` | `float`, `0.002` | Assumed std. dev. (m) of the surveyed AprilTag corner coordinates — weights the AprilTag prior term |
 | `--std_lidar` | `-sl` | `float`, `0.01` | Assumed std. dev. (m) of LiDAR points to the reference surface — used only in the final (non-robust) iteration |
@@ -100,7 +100,7 @@ No X11 socket or `DISPLAY` forwarding is needed for `systemcalib` — see §12.
 | `--scale` / `--no-scale` | — | `bool`, `False` | Estimate a per-LiDAR range scale |
 | `--division_model` / `--no-division_model` | — | `bool`, `False` | Use the division distortion model instead of the Brown (polynomial) model |
 | `--dist_degree` | — | `int`, `3` | Polynomial degree of the non-linear distortion model |
-| `--experiment_name` | `-e` | `str`, `"dev"` | Subfolder name under `path_out`, so repeated runs don't overwrite each other |
+| `--experiment-name` | `-e` | `str`, `"dev"` | Subfolder name under `path_out`, so repeated runs don't overwrite each other |
 | `--visualize` / `--no-visualize` | — | `bool`, `False` | Write alignment-evidence `.pcd` files before/after optimization (see §12); headless, no display required |
 
 No environment variables are read by `lcba.py` itself.
@@ -151,10 +151,10 @@ No environment variables are read by `lcba.py` itself.
   8204 -2.87271 -1.21236  0.06152
   ```
 
-### 3.2 `--map-path` — reference point cloud (`.ply`/`.pcd`, or a directory of `.pcd`)
+### 3.2 `--map-path` — reference point cloud (`.ply`/`.pcd`, or a directory of `*_global.pcd`)
 
 - **Identifier**: `pp.load_reference_map(map_path)` (`ipb_preprocessing.py`,
-  called from `main()`): a directory concatenates every `.pcd` inside it
+  called from `main()`): a directory concatenates every `*_global.pcd` inside it (raises `FileNotFoundError` if none; the Isaac shared-frame outputs; `_local`/`_base_link` ignored)
   into one cloud; anything else (typically
   `reference/reference_pointcloud.ply`) is read directly via
   `o3d.io.read_point_cloud`.
@@ -166,7 +166,7 @@ No environment variables are read by `lcba.py` itself.
   nearest-neighbor lookup, `_add_lidar_obs`, `lc_bundle_adjustment.py:351-397`).
 - No textual example possible (binary/ASCII PLY geometry file).
 
-### 3.3 `--path_data` directory
+### 3.3 `--data-path` directory
 
 Must contain:
 
@@ -245,7 +245,7 @@ Must contain:
 > archival/traceability) is harmless but has no effect on calibration
 > results.
 
-### 3.4 Output directory (`--path_out`)
+### 3.4 Output directory (`--out-path`)
 
 Not an input, but must be writable; the container mounts it read-write
 (`compose.yaml:13`).
@@ -319,6 +319,19 @@ Trace of `main()` in `scripts/lcba.py:39-114`:
      pinhole/fisheye flag, and a `camera.CVDistortionModel` (Brown polynomial
      of `dist_degree`, or division model if `--division_model`), seeded
      from OpenCV's `init_coeff`.
+   - **Lens models in an Isaac capture** (`ipb_preprocessing._isaac_camera`):
+     `plumb_bob`/pinhole (k1,k2,p1,p2,k3), `rational_polynomial`
+     (k1,k2,p1,p2,k3,k4,k5,k6) and `equidistant` (fisheye, k1..k3; k4 is not
+     modelled). If any camera has a rational denominator (k4..k6 != 0), *all*
+     cameras use the full rational model (`CVDistortionModel(rational=True)`:
+     `k` and `h` both degree 3, equal parameter counts). Without this the
+     k4..k6 terms were silently dropped and wide-FOV cameras started with
+     ~1e5 px error, diverging to a singular `N`. In rational mode
+     `_add_distortion_priors` (a) holds `h` at 0 for cameras with no given
+     denominator (`k_i`/`h_i` have opposite Jacobians at 0 -> singular) and
+     (b) adds a unit-weight prior on all distortion params at their initial
+     values (numerator/denominator are nearly collinear; otherwise they
+     drift and the solve blows up).
 9. **`add_lidars`** (`lcba.py:93-98`, `lc_bundle_adjustment.py:216-253`):
    - Converts each `Open3D` scan to a plain `np.array` (`self.points`).
    - Builds a `scipy.spatial.KDTree` over the reference map points
@@ -851,3 +864,28 @@ thing carrying real per-value error bars.
   the `DISPLAY` environment variable, and the
   `deploy.resources.reservations.devices` NVIDIA GPU reservation — none
   are needed any more.
+
+### Converter output matches the Isaac spec
+
+`scripts/convert_input_to_isaac_format.py` writes ROS `camera_info` cameras
+(`plumb_bob` / `equidistant`), `rotational_units: deg`, lidars with
+`config`/`output_coords: local`, and for every scan both `<name>_<id>_local.pcd`
+and `<name>_<id>_global.pcd` (fields `x y z intensity timestamp`; global is the
+base_link frame, cam0 standing in for base_link). `parse_isaac_lidar_data` loads
+only `*_local.pcd` when present. The lidar `config` profile name is a placeholder.
+
+### Calibrated config output
+
+- **`config.yaml` with `calibration_result`** (Isaac-format `path_data` only): `lcba.py`
+  also writes `<path_out>/<experiment>/config.yaml` = copy of the input config plus
+  `calibration_result: {converged, num_iterations, final_squared_error, cameras: {name: ...},
+  lidars: {name: ...}}`. Each sensor has `converged`/`num_iterations` (joint BA, so same for all),
+  `score` (cameras: `rms_reprojection_px`, `num_observations`, `sigma0_px`; lidars:
+  `rms_point_to_plane_m`, `num_points`, `sigma0_m`) and `offset` (x/y/z/roll/pitch/yaw vs
+  `base_link`, `rotational_units` of the input; = config offset of cam0 @ BA extrinsic, cam0 is held
+  fixed). Cameras also carry the calibrated ROS `camera_info` fields (`camera_matrix`,
+  `distortion_model` plumb_bob/rational_polynomial/equidistant, `distortion_coefficients`).
+  Euler angles near pitch ±90° can look odd (roll/yaw ~±135°) but are the same rotation.
+  `isaac/visualize_dataset.py` uses these instead of the original values (`apply_calibration`).
+  Verified: output/cal_cfg (4 cams, 2 lidars, 36 it, converged). Copy the file over a dataset's
+  `config.yaml` (with `camera/ lidar/ gt/`) to view it.
