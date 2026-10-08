@@ -80,13 +80,25 @@ def main(path_data, apriltag_file, path_out):
     init_k, init_coeff = pp.estimate_initial_k(
         observations, cam_is_pinhole, max_num_images=10, image_size=img_sizes)
 
-    # --- lidars: npy -> pcd, same frame_ids as the cameras ---
+    # --- lidars: npy -> local + global pcd (cam0 == base_link, so global = base_link frame) ---
+    lidar_to_base = {
+        name: pp.xyz_rxryrz2pose(cfg["init_lidari_to_cam0"][topic.replace("/", "")][3:],
+                                 cfg["init_lidari_to_cam0"][topic.replace("/", "")][:3])
+        for topic, name in zip(lidar_topics, lidar_names)}
     for topic, name in zip(lidar_topics, lidar_names):
         folder = join(path_data, topic.replace("/", ""))
         scans = sorted(Path(folder).glob("*.npy"))
         for frame_id, scan_f in zip(frame_ids, scans):
-            points = np.load(scan_f)
-            write_pcd(points, str(out / "lidar" / f"{name}_{frame_id:04d}_local.pcd"))
+            raw = np.load(scan_f).reshape(-1)
+            raw = raw[np.isfinite(raw["x"]) & ((raw["x"] != 0) | (raw["y"] != 0) | (raw["z"] != 0))]
+            xyz = np.stack([raw["x"], raw["y"], raw["z"]], axis=1).astype(np.float64)
+            T = lidar_to_base[name]
+            for coords, p in (("local", xyz), ("global", xyz @ T[:3, :3].T + T[:3, 3])):
+                pts = np.zeros(len(p), dtype=[(n, "<f4") for n in ("x", "y", "z", "intensity", "timestamp")])
+                pts["x"], pts["y"], pts["z"] = p.T
+                pts["intensity"] = raw["intensity"]
+                pts["timestamp"] = raw["t"] * 1e-9  # Ouster t is ns from scan start
+                write_pcd(pts, str(out / "lidar" / f"{name}_{frame_id:04d}_{coords}.pcd"))
         print(f"{name}: {len(scans)} scans converted")
 
     # --- config.yaml: cam0 stands in for base_link (its own offset is already identity) ---
@@ -97,16 +109,22 @@ def main(path_data, apriltag_file, path_out):
     cameras_cfg = []
     for c, (topic, name) in enumerate(zip(camera_topics, camera_names)):
         cx, cy, fx, fy = init_k[c]
-        k1, k2, p1, p2, k3 = np.asarray(init_coeff[c]).flatten()[:5]
+        d = np.asarray(init_coeff[c]).flatten()  # cv2 order k1,k2,p1,p2,k3,...
+        if cam_is_pinhole[c]:
+            model, d = "plumb_bob", d[:5]
+        else:  # fisheye: BA stores k1,k2,k3 at [0,1,4]
+            model, d = "equidistant", [d[0], d[1], d[4], 0.0]
         cameras_cfg.append({
             "sensor_name": name,
-            "model": models[c],
-            "resolution": {"width": int(img_sizes[c, 0]), "height": int(img_sizes[c, 1])},
-            "intrinsics": {"fx": float(fx), "fy": float(fy), "cx": float(cx), "cy": float(cy)},
-            "distortion": {"k1": float(k1), "k2": float(k2), "p1": float(p1),
-                          "p2": float(p2), "k3": float(k3)},
+            "camera_name": name,
+            "image_width": int(img_sizes[c, 0]),
+            "image_height": int(img_sizes[c, 1]),
+            "camera_matrix": {"rows": 3, "cols": 3, "data": [float(v) for v in (fx, 0, cx, 0, fy, cy, 0, 0, 1)]},
+            "distortion_model": model,
+            "distortion_coefficients": {"rows": 1, "cols": len(d), "data": [float(v) for v in d]},
         })
-    lidars_cfg = [{"sensor_name": name} for name in lidar_names]
+    lidars_cfg = [{"sensor_name": name, "config": "OS1_REV7_128ch10hz2048res", "output_coords": "local"}
+                  for name in lidar_names]
 
     base_link_sensors = {}
     for topic, name in zip(camera_topics, camera_names):
@@ -115,6 +133,7 @@ def main(path_data, apriltag_file, path_out):
         base_link_sensors[name] = offset_dict(cfg["init_lidari_to_cam0"][topic.replace("/", "")])
 
     isaac_cfg = {
+        "rotational_units": "deg",
         "cameras": cameras_cfg,
         "lidars": lidars_cfg,
         "base_link": {"x": 0.0, "y": 0.0, "z": 0.0, "roll": 0.0, "pitch": 0.0, "yaw": 0.0,
@@ -136,7 +155,7 @@ def main(path_data, apriltag_file, path_out):
         header += [f"{col}_x_3d", f"{col}_y_3d", f"{col}_z_3d"]
 
     pointcloud_filenames = ";".join(
-        f"lidar/{name}_{{frame_id:04d}}_local.pcd" for name in lidar_names)
+        f"lidar/{name}_{{frame_id:04d}}_{c}.pcd" for name in lidar_names for c in ("local", "global"))
 
     for t, frame_id in enumerate(frame_ids):
         with open(out / "gt" / f"apriltag_{frame_id:04d}.csv", "w", newline="") as f:
