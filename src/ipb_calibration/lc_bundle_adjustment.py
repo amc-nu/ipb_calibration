@@ -128,6 +128,10 @@ class LCBundleAdjustment:
 
         cami_is_pinhole = cami_is_pinhole if isinstance(
             cami_is_pinhole, list) else self.num_cameras*[cami_is_pinhole]
+        # Any camera with a rational denominator (k4..k6 != 0): all cameras get
+        # k(3)+h(3), since every camera must have the same parameter count.
+        rational = init_coeff is not None and any(
+            len(c) >= 8 and np.any(np.asarray(c)[5:8]) for c in init_coeff)
         self.cameras = [cd.Camera(self.K[i],
                                   T_cami_cam[i],
                                   is_pinhole=cami_is_pinhole[i],
@@ -135,8 +139,13 @@ class LCBundleAdjustment:
             degree=dist_degree,
             division_model=division_model,
             cv2_coeff=init_coeff[i],
+            rational=rational,
         )
         ) for i in range(len(self.K))]
+        # rational mode: see _add_distortion_priors
+        self.dist_prior = [np.copy(cam.distortion.params) for cam in self.cameras]
+        self.fixed_h = [rational and not np.any(np.asarray(c)[5:8])
+                        for c in init_coeff] if rational else []
         print(self.cameras)
 
     @property
@@ -305,6 +314,28 @@ class LCBundleAdjustment:
             f"Camera: Outliers: {num_invalids/(num_observations)*100:.2f}%")
         return s0_sq.sum()
 
+    def _add_distortion_priors(self, N, g):
+        """Rational mode only. (1) Cameras without a given denominator stay
+        polynomial: k_i and h_i have exactly opposite Jacobians at k=h=0, so
+        hold their h at the initial 0 with a stiff prior. (2) A tiny ridge on
+        all distortion params, anchored at their initial values: numerator/
+        denominator are nearly collinear (rank-deficient N otherwise, and they
+        drift along that direction) and the data can't resolve it."""
+        s0 = 0
+        for c, (cam, fixed) in enumerate(zip(self.cameras, self.fixed_h)):
+            d = cam.distortion
+            i = self.param_idx(f"cam_{c}")[0] + 10
+            idx = slice(i, i + len(d.params))
+            N[idx, idx] += 1.0 * np.eye(len(d.params))
+            g[idx] -= 1.0 * (d.params - self.dist_prior[c])[:, None]
+            if fixed:
+                h = slice(i + d.radial_degree, i + d.radial_degree + d.division_degree)
+                error = d.h[:, None]  # prior: stay at the initial 0
+                N[h, h] += 1e6 * np.eye(len(error))
+                g[h] -= 1e6 * error
+                s0 += 1e6 * (error ** 2).sum()
+        return s0
+
     def _add_pose_prior(self, N, g):
         s0_pr_sq = 0
         error = prior_error(
@@ -460,6 +491,7 @@ class LCBundleAdjustment:
             s0 = 0
             if self.num_cameras > 0:
                 s0 += self._add_pose_prior(N, g)
+                s0 += self._add_distortion_priors(N, g)
                 s0 += self._add_apriltag_priors(N, g)
                 s0 += self._add_ray_obs(N, g)
             if self.num_lidar > 0:

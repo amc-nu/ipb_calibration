@@ -123,13 +123,17 @@ def load_scan(file):
 
 
 def load_reference_map(map_path):
-    """Loads the reference map. A directory is treated as a set of .pcd
-    scans to concatenate into one cloud; anything else is read directly
+    """Loads the reference map. A directory is treated as a set of *_global.pcd
+    scans (only `*_global.pcd`, the Isaac shared-frame outputs) to
+    concatenate into one cloud; anything else is read directly
     (e.g. a single .ply or .pcd file)."""
     path = Path(map_path)
     if path.is_dir():
+        files = sorted(path.glob("*_global.pcd"))
+        if not files:
+            raise FileNotFoundError(f"No *_global.pcd files in map directory {path}")
         pcd = o3d.geometry.PointCloud()
-        for f in sorted(path.glob("*.pcd")):
+        for f in files:
             pcd += load_scan(str(f))
         return pcd
     return o3d.io.read_point_cloud(str(path))
@@ -216,11 +220,14 @@ def est_pose_from_obs(observations, cam_is_pinhole, K=np.eye(3), dist_coeff=np.z
         rays = homogenous(points_2d) @ inv(K).T
         rays /= rays[:, -1:]
     else:
-        points_2d_undist = cv2.fisheye.undistortPoints(points_2d[:, np.newaxis, :], K, np.zeros((1, 4)))
+        # equidistant k1,k2,k3 live at cv2 positions 0,1,4 of dist_coeff
+        D = np.append(np.asarray(dist_coeff, dtype=float)[[0, 1, 4]], 0.0) if len(dist_coeff) >= 5 else np.zeros(4)
+        points_2d_undist = cv2.fisheye.undistortPoints(points_2d[:, np.newaxis, :], K, D.reshape(1, 4))
         points_2d_undist = points_2d_undist.squeeze(1)
         rays = homogenous(points_2d_undist)
         rays /= rays[:, -1:]
-        
+        dist_coeff = np.zeros(5)  # already undistorted
+
     valid, rvec, tvec, inliers = cv2.solvePnPRansac(
         points_3d, rays[:, :2], np.eye(3), dist_coeff)
     assert valid
@@ -308,6 +315,44 @@ def index_apriltag_observations(observations, seen_tags):
 _CORNER_COLS = ("top_left", "top_right", "bottom_right", "bottom_left")
 
 
+def _isaac_camera(c):
+    """-> (is_pinhole, [w, h], [cx, cy, fx, fy], coeffs) from either camera schema:
+    ROS camera_info (camera_matrix/image_width/distortion_model/
+    distortion_coefficients; plumb_bob|rational_polynomial|equidistant) or the
+    older intrinsics/resolution/distortion/model one. Size is optional in the
+    old schema (falls back to 2x principal point; unused downstream)."""
+    if "camera_matrix" in c:
+        K = c["camera_matrix"]["data"]
+        fx, fy, cx, cy = K[0], K[4], K[2], K[5]
+        is_pinhole = c.get("distortion_model", "plumb_bob") != "equidistant"
+        d = list((c.get("distortion_coefficients") or {}).get("data") or [])
+        if not is_pinhole:
+            d = (d + [0.0] * 4)[:4]  # equidistant: k1..k4
+        size = [c.get("image_width", round(2 * cx)), c.get("image_height", round(2 * cy))]
+    else:
+        i = c["intrinsics"]
+        fx, fy, cx, cy = i["fx"], i["fy"], i.get("cx"), i.get("cy")
+        is_pinhole = c.get("model", "pinhole") == "pinhole"
+        dist = c.get("distortion") or {}
+        keys = ("k1", "k2", "p1", "p2", "k3", "k4", "k5", "k6") if is_pinhole else ("k1", "k2", "k3", "k4")
+        d = [dist.get(k, 0.0) for k in keys]
+        r = c.get("resolution")
+        size = [r["width"], r["height"]] if r else [round(2 * (cx or 0)), round(2 * (cy or 0))]
+        cx = size[0] / 2 if cx is None else cx
+        cy = size[1] / 2 if cy is None else cy
+    coeff = np.zeros(8)  # cv2 order k1,k2,p1,p2,k3,k4,k5,k6
+    if is_pinhole:
+        coeff[:len(d)] = d
+    else:
+        # equidistant theta_d = theta(1+k1 th^2+k2 th^4+k3 th^6+k4 th^8): the
+        # radial model on top of FisheyeProjection holds k1..k3; k4 isn't
+        # representable, BA absorbs it into the estimated k1..k3.
+        coeff[[0, 1, 4]] = d[:3]
+        if d[3]:
+            print(f"WARNING: equidistant k4={d[3]} is not modelled (ignored at init)")
+    return is_pinhole, size, [cx, cy, fx, fy], coeff
+
+
 def parse_isaac_camera_data(path_data):
     """Reads a calibration_room.py capture (config.yaml + gt/apriltag_<frame_id>.csv)
     in place of running AprilTag detection on images: the CSV already has each
@@ -319,25 +364,11 @@ def parse_isaac_camera_data(path_data):
     camera_names = [c["sensor_name"] for c in cameras_cfg]
     num_cams = len(cameras_cfg)
 
-    cam_is_pinhole = [c.get("model", "pinhole") ==
-                      "pinhole" for c in cameras_cfg]
-    img_sizes = np.array([[c["resolution"]["width"], c["resolution"]["height"]]
-                          for c in cameras_cfg])
-
-    init_k = []
-    init_coeff = []
-    for c in cameras_cfg:
-        intr = c["intrinsics"]
-        init_k.append([intr["cx"], intr["cy"], intr["fx"], intr["fy"]])
-        if c.get("model", "pinhole") == "pinhole":
-            dist = c.get("distortion") or {}
-            init_coeff.append(np.array([dist.get(k, 0.0) for k in
-                                        ("k1", "k2", "p1", "p2", "k3", "k4", "k5", "k6")]))
-        else:
-            # fisheye: CVDistortionModel isn't the fisheye model, so start
-            # from zero and let BA estimate the correction (same as the
-            # legacy image-detection path does for fisheye cameras).
-            init_coeff.append(np.zeros(5))
+    cams = [_isaac_camera(c) for c in cameras_cfg]
+    cam_is_pinhole = [c[0] for c in cams]
+    img_sizes = np.array([c[1] for c in cams])
+    init_k = [c[2] for c in cams]
+    init_coeff = [c[3] for c in cams]
     init_k = np.array(init_k)
 
     csv_files = sorted(
@@ -386,8 +417,10 @@ def parse_isaac_lidar_data(path_data, max_scanpoints: int = 2500):
 
     def sensor_pose(name):
         s = base_sensors[name]
-        return xyz_rxryrz2pose([s["x"], s["y"], s["z"]],
-                               [s["roll"], s["pitch"], s["yaw"]])
+        rpy = [s["roll"], s["pitch"], s["yaw"]]
+        if cfg.get("rotational_units", "deg") == "rad":
+            rpy = np.degrees(rpy)
+        return xyz_rxryrz2pose([s["x"], s["y"], s["z"]], rpy)
 
     T_cam0_base = sensor_pose(cam0_name)
     T_os_cam = [inv(T_cam0_base) @ sensor_pose(name) for name in lidar_names]
@@ -396,7 +429,9 @@ def parse_isaac_lidar_data(path_data, max_scanpoints: int = 2500):
     lidar_points = []
     for name in lidar_names:
         pattern = re.compile(rf"^{re.escape(name)}_(\d+)_")
-        scans = sorted(glob.glob(join(folder, f"{name}_*.pcd")),
+        # a converted capture holds both _local and _global; scans must not be doubled
+        scans = glob.glob(join(folder, f"{name}_*_local.pcd")) or glob.glob(join(folder, f"{name}_*.pcd"))
+        scans = sorted(scans,
                        key=lambda f: int(pattern.match(Path(f).name).group(1)))
         print('nr scans:', len(scans))
 

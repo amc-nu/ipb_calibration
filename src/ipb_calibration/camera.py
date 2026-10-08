@@ -25,9 +25,13 @@ def batch_eye(n, d):
 
 
 class CVDistortionModel:
-    def __init__(self, degree=3, division_model=True, cv2_coeff=None) -> None:
-        radial_degree = degree if not division_model else 0
-        division_degree = degree if division_model else 0
+    def __init__(self, degree=3, division_model=True, cv2_coeff=None, rational=False) -> None:
+        """rational=True: full OpenCV rational model, radial polynomial k1..k3
+        over denominator polynomial k4..k6 (ROS rational_polynomial), i.e.
+        both `k` and `h` are allocated (degree 3) and cv2_coeff's 8 entries are
+        used as they are. Otherwise only one of the two is (degree/division_model)."""
+        radial_degree = 3 if rational else (degree if not division_model else 0)
+        division_degree = 3 if rational else (degree if division_model else 0)
 
         self.k = np.zeros(radial_degree)
         self.h = np.zeros(division_degree)
@@ -35,9 +39,12 @@ class CVDistortionModel:
 
         if cv2_coeff is not None:
             assert len(cv2_coeff) >= 5
+            cv2_coeff = np.asarray(cv2_coeff, dtype=float)
+            if rational:
+                cv2_coeff = np.pad(cv2_coeff[:8], (0, max(0, 8 - len(cv2_coeff))))
             idx = np.arange(min(len(cv2_coeff), 8))
             idx[:5] = [0, 1, 4, 2, 3]
-            params = np.array(cv2_coeff)[idx]
+            params = cv2_coeff[idx]
             k, p, h = np.split(params, [3, 5])
             if len(cv2_coeff) < 8:
                 h = -k

@@ -5,6 +5,7 @@ from pathlib import Path
 import yaml
 import numpy as np
 import click
+from scipy.spatial.transform import Rotation
 from os.path import join
 from ipb_calibration import ipb_preprocessing as pp
 
@@ -20,11 +21,75 @@ def convert_dict(d, u=None):
     return d
 
 
+def _offset(T, units):
+    """4x4 sensor->base_link transform -> {x,y,z,roll,pitch,yaw} (fixed-axis xyz, Isaac convention)."""
+    rpy = Rotation.from_matrix(T[:3, :3]).as_euler("xyz", degrees=units != "rad")
+    return dict(zip(("x", "y", "z", "roll", "pitch", "yaw"),
+                    [float(v) for v in (*T[:3, 3], *rpy)]))
+
+
+def _rms(errs):
+    e = np.concatenate([np.ravel(x) for x in errs if len(x)]) if any(len(x) for x in errs) else np.zeros(1)
+    return float(np.sqrt(np.mean(e ** 2))), int(e.size)
+
+
+def write_calibrated_config(path_data, out_file, results, errors, stats):
+    """Copy of the capture's config.yaml plus `calibration_result` (calibrated camera_info
+    blocks, base_link offsets and per-sensor scores) for isaac/visualize_dataset.py.
+    Camera 0 is held fixed, so every offset = T_base_cam0 @ T_sensor_cam0."""
+    cfg = yaml.safe_load(open(join(path_data, "config.yaml")))
+    units = cfg.get("rotational_units", "deg")
+    sensors = cfg["base_link"]["sensors"]
+
+    def pose(o):
+        rpy = [o["roll"], o["pitch"], o["yaw"]]
+        return pp.xyz_rxryrz2pose([o["x"], o["y"], o["z"]], np.degrees(rpy) if units == "rad" else rpy)
+
+    T_base_cam0 = pose(sensors[cfg["cameras"][0]["sensor_name"]])
+    final = stats["iterations"][-1] if stats["iterations"] else {}
+    common = {"converged": stats.get("converged"), "num_iterations": stats.get("num_iterations_run")}
+    res = {**common, "final_squared_error": final.get("squared_error"),
+           "cameras": {}, "lidars": {}}
+
+    for i, c in enumerate(cfg["cameras"]):
+        r = results[c["sensor_name"]]
+        d = np.asarray(r["distortion_coeff"], float).ravel()
+        if r["is_pinhole"]:
+            rational = c.get("distortion_model") == "rational_polynomial" or np.any(d[5:8])
+            model, d = ("rational_polynomial", d[:8]) if rational else ("plumb_bob", d[:5])
+        else:  # fisheye: k1,k2,k3 are held at [0, 1, 4]
+            model, d = "equidistant", [d[0], d[1], d[4], 0.0]
+        rms, n = _rms(errors[f"cam_{i}"])
+        res["cameras"][c["sensor_name"]] = {
+            **common,
+            "score": {"rms_reprojection_px": rms, "num_observations": n // 2,
+                      "sigma0_px": final.get("camera_sigma0")},
+            "camera_name": c["sensor_name"],
+            "image_width": c.get("image_width"), "image_height": c.get("image_height"),
+            "camera_matrix": {"rows": 3, "cols": 3, "data": [float(v) for v in np.asarray(r["K"]).ravel()]},
+            "distortion_model": model,
+            "distortion_coefficients": {"rows": 1, "cols": len(d), "data": [float(v) for v in d]},
+            "offset": _offset(T_base_cam0 @ np.asarray(r["extrinsics"]), units),
+        }
+    for i, l in enumerate(cfg["lidars"]):
+        r = results[l["sensor_name"]]
+        rms, n = _rms(errors[f"lidar_{i}"])
+        res["lidars"][l["sensor_name"]] = {
+            **common,
+            "score": {"rms_point_to_plane_m": rms, "num_points": n,
+                      "sigma0_m": final.get("lidar_sigma0")},
+            "offset": _offset(T_base_cam0 @ np.asarray(r["extrinsics"]), units),
+        }
+    cfg["calibration_result"] = res
+    with open(out_file, "w") as f:
+        yaml.safe_dump(cfg, f, default_flow_style=False, sort_keys=False)
+
+
 @click.command()
 @click.option("--apriltag_file", "-a", type=str, help="File with the surveyed apriltag coordinates: either the legacy .txt (tag id + 3d corner, 4 rows/tag) or a reference-style .csv (tag_id + top_left/top_right/bottom_right/bottom_left_{x,y,z}_3d columns). Ignored for an Isaac Sim capture (path_data containing config.yaml): apriltag ground truth is read instead from that directory's gt/apriltag_<frame_id>.csv files.")
-@click.option("--path_data", "-p", type=str, help="Path to the data directory. Either an ipb calibration.yaml-style directory, or an Isaac Sim calibration_room.py capture directory (contains config.yaml, camera/, lidar/, gt/).")
+@click.option("--data-path", "-p", "path_data", type=str, help="Path to the data directory. Either an ipb calibration.yaml-style directory, or an Isaac Sim calibration_room.py capture directory (contains config.yaml, camera/, lidar/, gt/).")
 @click.option("--map-path", "-m", "map_path", type=str, help="Reference point cloud map: a single .ply/.pcd file, or a directory of .pcd files to concatenate into one map.")
-@click.option("--path_out", "-o", type=str, help="Directory in which the results will be stored.")
+@click.option("--out-path", "-o", "path_out", type=str, help="Directory in which the results will be stored.")
 @click.option("--std_pix", "-sp", default=0.2, help="Standard deviation of the apriltag detection in the image [pix]. (default=0.2)")
 @click.option("--std_apriltags", "-sa", default=0.002, help="Standard deviation of the 3D coordinates of the Apriltags.(default=0.002)")
 @click.option("--std_lidar", "-sl", default=0.01, help="Standard deviation of the LiDAR points. (default=0.01)")
@@ -33,7 +98,7 @@ def convert_dict(d, u=None):
 @click.option("--scale/--no-scale", default=False, help="Flag if one wants to estimate a scale for each LiDAR. (default=False)")
 @click.option("--division_model/--no-division_model", default=False, help="Flag if to estimate the non-linear distortion with the brownsche distortion model or the division model. (default=False)")
 @click.option("--dist_degree", default=3, help="Polynomial degree of the non-linear distortion model. (default=3)")
-@click.option("--experiment_name", "-e", default="dev", help="Will be extended to the out_path to enable different experiments without overriding. (default=dev)")
+@click.option("--experiment-name", "-e", "experiment_name", default="dev", help="Will be extended to the out_path to enable different experiments without overriding. (default=dev)")
 @click.option("--visualize/--no-visualize", default=False, help="Flag if the initial guess and the final optimization should be visualized. (default=False)")
 def main(apriltag_file,
          path_data,
@@ -139,6 +204,9 @@ def main(apriltag_file,
     }
     with open(join(path_out, "summary.yaml"), "w") as outfile:
         yaml.safe_dump(summary, outfile, default_flow_style=False)
+    if isaac_format:
+        write_calibrated_config(path_data, join(path_out, "config.yaml"),
+                                results, errors, lcba.stats)
     print(30*"-")
     print("Summary:", {k: v for k, v in summary.items() if k != "iterations"})
     print(30*"-")
