@@ -10,15 +10,15 @@
 
 # To (re)generate isaac_format/ from input/ + reference/apriltag_coords.csv:
 # python3 calib/scripts/convert_input_to_isaac_format.py \
-#     --path_data input \
+#     --data-path input \
 #     --apriltag_file reference/apriltag_coords.csv \
 #     --path_out isaac_format
 
 python3 calib/scripts/lcba.py \
     --map-path reference/reference_pointcloud.ply \
-    --path_data isaac_format \
-    --path_out output \
-    --experiment_name result1
+    --data-path isaac_format \
+    --out-path output \
+    --experiment-name result1
 
 
 
