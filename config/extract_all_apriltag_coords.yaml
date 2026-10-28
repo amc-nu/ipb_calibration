@@ -110,3 +110,11 @@ walls:
 # on higher image pyramid levels. This is the highest image pyramid level number. 
 # 0 == original size, 1 == half rows/cols of original, ... Default is: 2
 # max_pyramid_level: 2
+
+# Apriltag family, e.g. tag36h11 (default), tag25h9, tag16h5, tagStandard41h12
+# tag_family: tag36h11
+
+# Edge length of the tag's outer black square, in scan units (usually meters).
+# If given, detections whose size differs by more than 25% are rejected
+# (removes false positives, esp. for small families like tag16h5).
+# tag_size: 0.16

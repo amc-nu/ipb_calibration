@@ -61,7 +61,10 @@ if __name__ == '__main__':
     max_pyramid_level = config['max_pyramid_level']
   else:
     max_pyramid_level = 2
-    
+
+  tag_family = config.get('tag_family', 'tag36h11')
+  tag_size = config.get('tag_size')  # outer black square edge in scan units (m); None = no size filter
+
   # Loop over all walls  
   for wallname in config['walls'].keys():
     # Step 1: Create orthophoto
@@ -73,7 +76,8 @@ if __name__ == '__main__':
       config['walls'][wallname]['projection_direction'])
     
     # Step 2: Apriltag extraction on that orthophoto
-    detect_apriltags(odir)
+    detect_apriltags(odir, max_pyramid_level, tag_family=tag_family,
+                     tag_size=tag_size, pixel_size=config['pixel_size'])
 
   # Combine all extracted coordinates to one file
   print('\n Combine all coordinates ...', flush=True)

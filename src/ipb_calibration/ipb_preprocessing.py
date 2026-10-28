@@ -210,9 +210,15 @@ def est_pose_from_obs(observations, cam_is_pinhole, K=np.eye(3), dist_coeff=np.z
         rays = homogenous(points_2d_undist)
         rays /= rays[:, -1:]
         
-    valid, rvec, tvec, inliers = cv2.solvePnPRansac(
-        points_3d, rays[:, :2], np.eye(3), dist_coeff)
-    assert valid
+    # rays are normalized, so the threshold is given in pixels / focal length (the default 8 would accept everything);
+    # loosen it if the initial intrinsics are too rough for the tight one
+    for thresh_pix in (15, 50, 150):
+        valid, rvec, tvec, inliers = cv2.solvePnPRansac(
+            points_3d, rays[:, :2], np.eye(3), dist_coeff,
+            reprojectionError=thresh_pix/K[0, 0])
+        if valid:
+            break
+    assert valid, f"PnP failed for {len(points_3d)} points"
     T_map2cam = np.eye(4)
     T_map2cam[:3, -1:] = tvec
     T_map2cam[:3, :3] = Rotation.from_rotvec(rvec.squeeze()).as_matrix()
@@ -258,8 +264,8 @@ def estimate_initial_guess(observations, cam_is_pinhole, init_K=None, dist_coeff
     return T_cam0_map_t, T_cami_cam0
 
 
-def parse_camera_data(apriltag_file, path_data):
-    april = Apriltags(apriltag_file)
+def parse_camera_data(apriltag_file, path_data, tag_family="tag36h11"):
+    april = Apriltags(apriltag_file, tag_family)
     cfg = yaml.safe_load(open(join(path_data, "calibration.yaml")))
 
     num_cams = len(cfg["image_topics"])
@@ -294,6 +300,7 @@ def parse_camera_data(apriltag_file, path_data):
             init_c[:3, -1] += init_p[3:]
             T_cami_cam0.append(init_c)
 
+    assert seen_tags, f"No apriltags of family {tag_family} detected in any image; check --tag_family"
     tag, coords = np.fromiter(
         seen_tags.keys(), dtype=np.int64), np.stack([*seen_tags.values()])
     coords = coords.reshape([-1, 3])
@@ -342,9 +349,12 @@ def parse_camera_data(apriltag_file, path_data):
 
 
 def find_plane(pts3d, pts2d, threshold=0.1):
+    """Largest set of tags (pts3d [n,4,3]) on a common plane: plane-local 3D corners (z=0), their 2D corners
+    and the [n] tag mask."""
     num = []
     points3d = []
     points2d = []
+    masks = []
     for (p1, p2, p3, p4) in pts3d:
         e1 = (p2-p1)/norm(p2-p1)
         e2 = (p3-p1)/norm(p3-p1)
@@ -358,26 +368,39 @@ def find_plane(pts3d, pts2d, threshold=0.1):
 
         points3d.append(valid_pts)
         points2d.append(pts2d[valids].reshape(-1, 2))
+        masks.append(valids)
         num.append(len(valid_pts))
 
     best = np.argmax(num)
-    return points3d[best], points2d[best]
+    return points3d[best], points2d[best], masks[best]
+
+
+def find_planes(pts3d, pts2d, threshold=0.1):
+    """All tag planes in one image, largest first, as (plane-local 3D corners, 2D corners, world-plane id). Each plane
+    is a separate view for cv2.calibrateCamera, so a single image of tags on several walls already gives the
+    differently oriented planes Zhang's method needs."""
+    planes = []
+    while len(pts3d):
+        p3, p2, on = find_plane(pts3d, pts2d, threshold)
+        c = pts3d[on].reshape(-1, 3)  # world-plane id (normal, offset), sign-canonical: p3 is plane-local (z=0)
+        n = np.linalg.svd(c - c.mean(0))[2][2]
+        n = n if tuple(n) >= tuple(-n) else -n
+        planes.append((p3, p2, (*np.round(n, 1), round(float(n @ c.mean(0)), 0))))
+        pts3d, pts2d = pts3d[~on], pts2d[~on]
+    return planes
 
 
 def estimate_initial_k(observations, cam_is_pinhole, max_z_dist=0.1, image_size=(2064, 1024), max_num_images=5):
     num_cameras = len(observations)
     num_poses = len(observations[0])
 
-    max_num_images = min(
-        max_num_images, num_poses) if max_num_images > 0 else num_poses
+    max_num_images = max_num_images if max_num_images > 0 else 10**9  # max number of planar views (not images)
     # count for each camera and each timestamp how many observations
     num_obs = np.zeros([num_cameras, num_poses])  # [num_cams, num_poses]
     init_values = []
     init_coeff = []
     for c, c_obs in enumerate(observations):
-
-        image_points = [np.zeros([0, 2]) for _ in range(max_num_images)]
-        object_points = [np.zeros([0, 3]) for _ in range(max_num_images)]
+        views = []
         image_size_c = image_size if isinstance(
             image_size, tuple) else tuple(image_size[c])
         for t, t_obs in enumerate(c_obs):
@@ -387,16 +410,20 @@ def estimate_initial_k(observations, cam_is_pinhole, max_z_dist=0.1, image_size=
                               for det in t_obs])
             pts2d = np.stack([det["corners"]
                               for det in t_obs])
-            points_3d, points_2d = find_plane(
-                pts3d, pts2d, threshold=max_z_dist)
-            num_obs[c, t] = len(points_3d)
-
-            num_pts = [len(i) for i in object_points]
-            min_idx = np.argmin(num_pts)
-
-            if len(points_3d) >= num_pts[min_idx]:
-                object_points[min_idx] = points_3d.astype(np.float32)
-                image_points[min_idx] = points_2d.astype(np.float32)
+            planes = find_planes(pts3d, pts2d, threshold=max_z_dist)
+            num_obs[c, t] = len(planes[0][0])
+            views += planes
+        # single-tag planes (4 points, e.g. individually tilted boards) break cv2.fisheye.calibrate's init.
+        # Views are taken round-robin over distinct world planes (largest first within a plane): the same plane seen
+        # from a translating rig has the same orientation in every image, which is Zhang's degenerate case (the
+        # straight-line runs picked 7 views of one panel and got f 570..1190 px).
+        views = sorted([v for v in views if len(v[0]) >= 8], key=lambda v: -len(v[0]))
+        rank, by_plane = [], {}
+        for v in views:
+            rank.append(by_plane.get(v[2], 0)); by_plane[v[2]] = rank[-1] + 1
+        views = [v for _, v in sorted(zip(rank, views), key=lambda rv: (rv[0], -len(rv[1][0])))][:max_num_images]
+        object_points = [v[0].astype(np.float32) for v in views]
+        image_points = [v[1].astype(np.float32) for v in views]
 
         print(f"cam{c}, num pts", num_obs[c, num_obs[c] >= 12])
         if cam_is_pinhole[c]:
@@ -404,15 +431,16 @@ def estimate_initial_k(observations, cam_is_pinhole, max_z_dist=0.1, image_size=
                 object_points, image_points, image_size_c, None, None,
             )
         else:
-            calibration_flags = cv2.fisheye.CALIB_RECOMPUTE_EXTRINSIC 
+            fe = cv2.fisheye if hasattr(cv2.fisheye, "CALIB_FIX_SKEW") else cv2  # OpenCV 5 moved the flags
+            calibration_flags = fe.CALIB_RECOMPUTE_EXTRINSIC
 
             # fisheye calibration is more stable when skew and distortion parameters are kept at zero
-            calibration_flags += cv2.fisheye.CALIB_FIX_SKEW + cv2.fisheye.CALIB_FIX_K1 \
-                                + cv2.fisheye.CALIB_FIX_K2 + cv2.fisheye.CALIB_FIX_K3 + cv2.fisheye.CALIB_FIX_K4
+            calibration_flags += fe.CALIB_FIX_SKEW + fe.CALIB_FIX_K1 \
+                                + fe.CALIB_FIX_K2 + fe.CALIB_FIX_K3 + fe.CALIB_FIX_K4
 
             retval, cameraMatrix, distCoeffs, rvecs, tvecs = cv2.fisheye.calibrate(
-                        [obj_points[:, np.newaxis, :] for obj_points in object_points], \
-                            [img_points[:, np.newaxis, :] for img_points in image_points], \
+                        [obj_points[np.newaxis].astype(np.float64) for obj_points in object_points], \
+                            [img_points[np.newaxis].astype(np.float64) for img_points in image_points], \
                                 image_size_c, None, None, flags=calibration_flags)
     
             distCoeffs = np.zeros((1, 5)) # set distCoeffs to zero as we use other distortion model as openCV 

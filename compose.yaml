@@ -1,36 +1,51 @@
 services:
   ## System calibration with given apriltag 3D coordinates
   systemcalib:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.24.04
 
     # Mounted paths from the repo into the docker:
     volumes:
       # The folder with the recorded images and scans
-      - $PWD/input:/root/input:ro
+      - $PWD/input/ipb_16h5_spin_261016_155348/input:/root/input:ro
       # The folder with the reference data: room scan and apriltag coords
-      - $PWD/reference:/root/reference:ro
+      - $PWD/input/ipb_16h5_spin_261016_155348/reference:/root/reference:ro
+      # Optional ground truth (Isaac Sim rig config); if present, a GT vs result table ends the log
+      - $PWD/input/ipb_16h5_spin_261016_155348/config.yaml:/root/gt.yaml:ro
       # The output of the calibration
       - $PWD/output:/root/output
       # X11 socket for enabling display of windows from inside the container
-      - /tmp/.X11-unix:/tmp/.X11-unix
+      # - /tmp/.X11-unix:/tmp/.X11-unix
 
-    environment:
-      # for enabling window display from inside the container
-      - DISPLAY=${DISPLAY}
+    # environment:
+    #   # for enabling window display from inside the container
+    #   - DISPLAY=${DISPLAY}
     # The following is needed for allowing 3D view window inside the container.
     # An nvidia GPU is needed. If no visualization is needed and you have no
     # nvidia GPU, this can be commented out.
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu, compute,utility,graphics]
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu, compute,utility,graphics]
 
-    # the following avoids to start this service if a specific profile is given in docker compose              
+    # # the following avoids to start this service if a specific profile is given in docker compose              
+    # profiles:
+    #   - ''
+
+
+  ## Same calibration on the legacy Ubuntu 20.04 image (EOL), only for comparison:
+  ## docker compose --profile ubuntu20 up --build systemcalib_2004
+  systemcalib_2004:
+    extends: systemcalib
+    build:
+      context: .
+      dockerfile: Dockerfile.20.04
     profiles:
-      - ''
+      - ubuntu20
 
 
   ## Apriltag coordinates extraction for system calibration

@@ -103,6 +103,9 @@ After the calibration, the output is available in folder `output`:
   calibration result with extrinsics and intrinsics together
   with their a-posteriori covariance matrices of the cameras and lasers.
   `result1/args.yaml`: The settings used for the calibration. 
+- `result1/verification/`: Headless check of the result (disable with `--no-export`):
+  - `lidar_<name>_scans.ply`: all scans of a LiDAR in the reference map frame (colored by pose index), to overlay with `reference_pointcloud.ply` e.g. in CloudCompare.
+  - `<camera>/<image>_proj.png`: each camera image with the LiDAR scan of the same pose projected into it (colored by depth). Points should lie on the matching structures. Uses the full, non-downsampled scans.
 
 **Notes**:
 - If you need to change some parameters of the calibration program, 
@@ -125,6 +128,22 @@ We highly recommend using docker. In case it is not needed you can take a look a
 Most importantly:
 Install the [AprilTag library](https://github.com/AprilRobotics/apriltag/releases/tag/v3.4.2) (tested under 3.4.2).
 Install this repository (e.g. `pip install -e .`)
+
+## Experiment report and slides
+
+After running experiments (`output/exp_Box*` with their `output/dataset_Box*`), build the HTML report and the slide deck with one command (host python with `numpy`, `pyyaml`, `Pillow`, `matplotlib`, and `pdftoppm` from poppler-utils):
+
+```bash
+python3 scripts/make_report.py output        # output dir is optional, default: output
+```
+
+This writes into `output/report/`:
+
+- `index.html`: experiment explorer, metric comparison charts, 3D clouds.
+- `report.html`: 8-slide deck; use its "Export PDF" button (or `google-chrome --headless --print-to-pdf=slides.pdf --no-pdf-header-footer report.html`).
+- `images/`, `data/`, `lib/`: copied assets, so `output/report/` can be copied on its own to another machine.
+
+To rebuild only the slides: `python3 scripts/make_slides.py output`. The HTML sources are in `templates/report/`; edit them and rerun the command.
 
 ## ToDos
 - [x] Add scripts for extracting the Apriltag coordinates from the TLS point cloud

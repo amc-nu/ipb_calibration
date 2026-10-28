@@ -1,3 +1,4 @@
+import copy
 import yaml
 import ipdb
 from scipy.spatial import KDTree
@@ -244,6 +245,8 @@ class LCBundleAdjustment:
 
         for i in range(self.num_lidar):
             self.errors[f"lidar_{i}"] = [[] for _ in range(self.num_poses)]
+        self.lidar_inlier_ratio = np.zeros([self.num_lidar, self.num_poses])
+        self.lidar_inlier_ratio_init = None
 
         # Estimate scale and range offset
         self.lidars = [li.Lidar(T_lidar_cam[i],
@@ -351,6 +354,7 @@ class LCBundleAdjustment:
     def _add_lidar_obs(self, N, g):
         # Add lidars
         s0_points_sq = 0
+        cost = 0
         num_observations = 0
 
         for l, (scans, lidar) in enumerate(zip(self.points, self.lidars)):  # for each scan
@@ -389,12 +393,22 @@ class LCBundleAdjustment:
                 N += J.T @ (wweight*J)
                 g -= (J*wweight).T @ error
                 s0_points_sq += error.T @ (wweight * error)
+                # Cost for LM step acceptance: the Geman-McClure cost these IRLS weights minimize, plus
+                # unmatched points at the cost of the association threshold (keeps it continuous). Without
+                # that, pushing points out of range lowers the error and LM slides the scan off the map.
+                k2 = self.GM_k_lidar**2
+                cost += np.sum(error**2/self.std_lidar**2) if self.final_step else np.sum(error**2/(k2+error**2))
+                cost += (~valids).sum() * (self.outlier_mult**2 if self.final_step else
+                                           self.outlier_mult**2/(1+self.outlier_mult**2))
+                self.lidar_inlier_ratio[l, t] = valids.mean()
                 num_observations += num_points
 
                 self.errors[f"lidar_{l}"][t] = error
+        if self.lidar_inlier_ratio_init is None:
+            self.lidar_inlier_ratio_init = self.lidar_inlier_ratio.copy()
         print("LiDAR: sigma0", (s0_points_sq /
               (num_observations-self.num_params))**0.5)
-        return s0_points_sq.sum()
+        return cost
 
     def _add_apriltag_priors(self, N, g):
         error = (self.apriltag_coords-self.coords_prior).flatten()
@@ -473,11 +487,24 @@ class LCBundleAdjustment:
         out["frameposes"] = {"poses": poses, "cov": pose_cov}
         return out
 
+    def _get_state(self):
+        return copy.deepcopy((self.T_cam_map, self.apriltag_coords, self.cameras, self.lidars if self.num_lidar else None))
+
+    def _set_state(self, state):
+        self.T_cam_map, self.apriltag_coords, self.cameras, lidars = copy.deepcopy(state)
+        if lidars is not None:
+            self.lidars = lidars
+
     def optimize(self, num_iter=50, visualize=False):
         if visualize:
             self.visualize()
 
+        prev, lam = None, 1e-3
+        # Stage 1 solves cameras/poses/tags with the LiDARs held fixed: LiDAR data association against
+        # poses from rough initial intrinsics locks the LiDAR extrinsics into a wrong (shifted) alignment.
+        lidar_on = self.num_lidar == 0 or self.num_cameras == 0
         for i in tqdm(range(num_iter)):
+            self.num_iter_used = i + 1
             # Param Order: t_w, r_w, t_c, r_c, t_l, r_l, p
             N = np.zeros([self.num_params, self.num_params])
             g = np.zeros([self.num_params, 1])
@@ -489,13 +516,29 @@ class LCBundleAdjustment:
                 s0 += self._add_apriltag_priors(N, g)
                 s0 += self._add_ray_obs(N, g)
             if self.num_lidar > 0:
-                s0 += self._add_lidar_obs(N, g)
+                if lidar_on:
+                    s0 += self._add_lidar_obs(N, g)
+                else:
+                    for l in range(self.num_lidar):
+                        a, b = self.param_idx(f"lidar_{l}")
+                        N[a:b, a:b] += np.eye(b - a) * 1e12  # freeze
             s0 = s0.squeeze()
             print(f"squared Error: {s0:.5}")
 
             # Solve
-            cov = np.linalg.inv(N)
-            dx = cov @ g
+            # Levenberg-Marquardt: the initial guess can be rough enough for plain Gauss-Newton to diverge.
+            # Reject steps that increase the error (restore state, retry the saved N,g with more damping).
+            if prev is not None and (s0 > (1 + 1e-6) * prev["s0"] or not np.isfinite(s0)) and prev["final"] == self.final_step:
+                self._set_state(prev["state"])
+                N, g, s0 = prev["N"], prev["g"], prev["s0"]
+                lam *= 10
+                print(f"step rejected, lambda={lam:.1e}")
+            else:
+                lam = max(lam / 3, 1e-9)
+            prev = dict(N=N, g=g, s0=s0, final=self.final_step, state=self._get_state())
+
+            # Solve
+            dx = np.linalg.solve(N + lam * np.diag(np.diag(N)), g)
 
             # Update Params
             sizes_c = np.cumsum([self.num_poses*6,
@@ -505,7 +548,8 @@ class LCBundleAdjustment:
             d_w, d_c, d_l, d_p = np.split(
                 dx.squeeze(), sizes_c)
 
-            self.converged = True
+            # heavily damped steps are small without being converged; lam > 1e6 means no step reduces the cost
+            self.converged = lam < 1e-3 or lam > 1e6
             self._update_poses(d_w)
             self._update_camera_extrinsics(d_c)
             self._update_lidar_extrinsics(d_l)
@@ -513,7 +557,10 @@ class LCBundleAdjustment:
 
             # Convergence
             print('With robust Kernel:', not self.final_step)
-            if self.converged:
+            if self.converged and not lidar_on:
+                print("!!! cameras converged, adding LiDARs", i)
+                lidar_on, prev, lam = True, None, 1e-3
+            elif self.converged:
                 # break
                 if self.final_step:
                     print("converged")
@@ -524,7 +571,8 @@ class LCBundleAdjustment:
             self.visualize()
         print(self.cameras)
         print(self.lidars)
-        return self.result2dict(cov), self.errors
+        self.cov = np.linalg.inv(N)  # full covariance, metrics.py needs the cross terms
+        return self.result2dict(self.cov), self.errors
 
 
 def read_calibration_yaml_file(filename: str):

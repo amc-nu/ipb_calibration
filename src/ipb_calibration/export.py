@@ -42,24 +42,38 @@ def _overlay(img, cam, pts_world, T_cam_map, radius=1, max_depth=None):
     return img
 
 
+def _reproj_overlay(img, p_det, p_proj, scale=50):
+    """Detected corners (green circle), corners projected by the result (red cross) and the error vector
+    scaled by `scale` (yellow line from the detection) so sub-pixel errors stay visible."""
+    for d, p in zip(p_det, p_proj):
+        di = tuple(int(v) for v in np.round(d))
+        cv2.circle(img, di, 6, (0, 255, 0), 1, cv2.LINE_AA)
+        cv2.drawMarker(img, tuple(int(v) for v in np.round(p)), (0, 0, 255), cv2.MARKER_CROSS, 10, 1)
+        cv2.line(img, di, tuple(int(v) for v in np.round(d + scale * (p - d))), (0, 255, 255), 1, cv2.LINE_AA)
+    rmse = np.sqrt(np.mean(np.sum((p_proj - p_det)**2, axis=1)))
+    for i, (text, col) in enumerate([("o detected corner", (0, 255, 0)), ("+ projected corner (result)", (0, 0, 255)),
+                                     (f"- error x{scale}", (0, 255, 255)), (f"rmse {rmse:.3f} px, {len(p_det)} corners", (255, 255, 255))]):
+        cv2.putText(img, text, (10, 30 + 30 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 4, cv2.LINE_AA)
+        cv2.putText(img, text, (10, 30 + 30 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.8, col, 2, cv2.LINE_AA)
+    return img
+
+
 def export_verification(lcba, path_data, path_out):
     """Write to path_out:
       - lidar_<name>_scans.ply: all scans in the world (reference map) frame,
         colored by pose index
       - <camera>/<image>_proj.png: every image with the LiDAR scan of the same
         pose projected into it (colored by depth)
+      - <camera>/<image>_reproj.png: detected vs. projected tag corners
     Uses the full (non-downsampled) scans from path_data.
     """
-    if lcba.num_lidar == 0:
-        print("No lidar data, nothing to export.")
-        return
     path_out = Path(path_out)
     path_out.mkdir(parents=True, exist_ok=True)
     cfg = lcba.cfg
 
     # world-frame scans per lidar: list over poses
     world = []
-    for topic, lidar in zip(cfg["point_cloud_topics"], lcba.lidars):
+    for topic, lidar in zip(cfg.get("point_cloud_topics", [])[:lcba.num_lidar], lcba.lidars if lcba.num_lidar else []):
         name = topic.replace("/", "")
         files = sorted(glob.glob(join(path_data, name, "*.npy")))
         scans = [lidar.scan2world(np.asarray(load_scan(f).points), lcba.T_cam_map[t])
@@ -73,14 +87,20 @@ def export_verification(lcba, path_data, path_out):
         o3d.io.write_point_cloud(str(path_out / f"lidar_{name}_scans.ply"),
                                  np2o3d(pts, cols))
 
-    for topic, cam in zip(cfg["image_topics"], lcba.cameras):
+    for c, (topic, cam) in enumerate(zip(cfg["image_topics"], lcba.cameras)):
         name = topic.replace("/", "")
         (path_out / name).mkdir(exist_ok=True)
         images = sorted(glob.glob(join(path_data, name, "*.png")))
         for t, f in enumerate(images[:lcba.num_poses]):
             img = cv2.imread(f)
-            for scans in world:
-                if t < len(scans):
-                    img = _overlay(img, cam, scans[t], lcba.T_cam_map[t])
-            cv2.imwrite(str(path_out / name / (basename(f)[:-4] + "_proj.png")), img)
+            p_det = lcba.p_img[c][t]
+            if len(p_det):
+                p_proj = cam.project(lcba.apriltag_coords[lcba.ray2apriltag_idx[c][t].astype(int)], lcba.T_cam_map[t])
+                cv2.imwrite(str(path_out / name / (basename(f)[:-4] + "_reproj.png")),
+                            _reproj_overlay(img.copy(), p_det, p_proj))
+            if world:
+                for scans in world:
+                    if t < len(scans):
+                        img = _overlay(img, cam, scans[t], lcba.T_cam_map[t])
+                cv2.imwrite(str(path_out / name / (basename(f)[:-4] + "_proj.png")), img)
     print(f"Verification export written to {path_out}")

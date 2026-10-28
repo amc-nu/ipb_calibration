@@ -1,0 +1,7 @@
+[
+ {"run":"A","targets":"31 spin frames, 20 boards","k":"0.19 / 0.41","t":"4.4 (2.4)","dist":"0.0009","lidar":"1.2 mm / 0.008°"},
+ {"run":"B","targets":"1 frame, 20 boards (6 tags/cam)","k":"camera stage never converges","t":"","dist":"","lidar":""},
+ {"run":"C2 (dense)","targets":"1 frame, 126 boards (wall grid + 45° boards at 3.5/6 m)","k":"0.46 / 0.65","t":"8.4 (5.4), 14 on axis","dist":"0.0039","lidar":"2.8 mm / 0.006°"},
+ {"run":"C3","targets":"C2 + 4 small 0.3 m tags at 2 m per cam","k":"0.30 / 0.39","t":"4.1 (4.5), 7 on axis","dist":"0.0118","lidar":"1.5 mm / 0.005°"},
+ {"run":"C3b","targets":"C3 minus partly covered boards (94)","k":"0.30 / 0.47","t":"4.0 (4.4)","dist":"0.0140","lidar":"1.5 mm / 0.006°"}
+]

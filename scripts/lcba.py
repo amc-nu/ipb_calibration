@@ -8,6 +8,10 @@ import numpy as np
 import click
 from os.path import join
 from ipb_calibration import ipb_preprocessing as pp
+from ipb_calibration.export import export_verification
+from ipb_calibration.diagnostics import check_data
+from ipb_calibration.gt_report import gt_report
+from ipb_calibration.metrics import compute_metrics, metrics_report, MEANINGS
 
 
 def convert_dict(d, u=None):
@@ -26,6 +30,7 @@ def convert_dict(d, u=None):
 @click.option("--path_data", "-p", type=str, help="Path to the data directory. Directory should contain the calibration.yaml file as well as the folders with the recorded calibration data.")
 @click.option("--faro_file", "-f", type=str, help=".ply file of the reference point cloud map.")
 @click.option("--path_out", "-o", type=str, help="Directory in which the results will be stored.")
+@click.option("--tag-family", "tag_family", required=True, type=str, help="Apriltag family used in the images, e.g. tag36h11, tag16h5, tag25h9, tagStandard41h12.")
 @click.option("--std_pix", "-sp", default=0.2, help="Standard deviation of the apriltag detection in the image [pix]. (default=0.2)")
 @click.option("--std_apriltags", "-sa", default=0.002, help="Standard deviation of the 3D coordinates of the Apriltags.(default=0.002)")
 @click.option("--std_lidar", "-sl", default=0.01, help="Standard deviation of the LiDAR points. (default=0.01)")
@@ -35,11 +40,14 @@ def convert_dict(d, u=None):
 @click.option("--division_model/--no-division_model", default=False, help="Flag if to estimate the non-linear distortion with the brownsche distortion model or the division model. (default=False)")
 @click.option("--dist_degree", default=3, help="Polynomial degree of the non-linear distortion model. (default=3)")
 @click.option("--experiment_name", "-e", default="dev", help="Will be extended to the out_path to enable different experiments without overriding. (default=dev)")
+@click.option("--export/--no-export", default=True, help="Write aligned scans (.ply) and LiDAR-projected camera images to <out>/<experiment>/verification. (default=True)")
+@click.option("--gt_file", "-g", default=None, type=str, help="Isaac Sim rig config (.yaml with base_link.sensors and cameras) holding the ground truth. If given, a GT vs result table is added to the report at the end (<out>/report.txt).")
 @click.option("--visualize/--no-visualize", default=False, help="Flag if the initial guess and the final optimization should be visualized. (default=False)")
 def main(apriltag_file,
          path_data,
          faro_file,
          path_out,
+         tag_family,
          std_pix,
          std_apriltags,
          std_lidar,
@@ -49,14 +57,16 @@ def main(apriltag_file,
          scale,
          division_model,
          experiment_name,
-         visualize):
+         visualize,
+         export,
+         gt_file):
     config = locals()
     print(30*"-")
     print(10*"-", experiment_name, 10*"-")
     print(30*"-")
     pcd_map = o3d.io.read_point_cloud(faro_file)
     imgpixel, indices, coords, observations, T_cami_cam_yaml, img_sizes, cam_is_pinhole = pp.parse_camera_data(
-        apriltag_file, path_data)
+        apriltag_file, path_data, tag_family)
 
     init_k, init_coeff = pp.estimate_initial_k(
         observations, cam_is_pinhole, max_num_images=10, image_size=img_sizes)
@@ -97,8 +107,14 @@ def main(apriltag_file,
                     estimate_bias=bias,
                     estimate_scale=scale)
 
-    results, errors = lcba.optimize(
-        num_iter=100, visualize=visualize)
+    try:
+        results, errors = lcba.optimize(
+            num_iter=150, visualize=visualize)
+    except np.linalg.LinAlgError:
+        check_data(lcba, img_sizes)  # explain which input data likely caused the failure
+        raise
+
+    results["metrics"] = compute_metrics(lcba)
 
     path_out = Path(join(path_out, experiment_name))
     path_out.mkdir(exist_ok=True, parents=True)
@@ -112,6 +128,20 @@ def main(apriltag_file,
         pickle.dump(errors, f)
     with open(join(path_out, "args.yaml"), "w") as outfile:
         yaml.safe_dump(config, outfile)
+
+    check_data(lcba, img_sizes, join(path_out, "data_report.txt"))
+
+    if export:
+        export_verification(lcba, path_data, join(path_out, "verification"))
+
+    # last, so it ends the tee'd log
+    report = metrics_report(results["metrics"])
+    if gt_file:
+        report += "\n" + gt_report(lcba, results["metrics"], gt_file, apriltag_file, join(path_out, "reprojection_corners.csv"))
+    report += "\n" + MEANINGS
+    print(report)
+    with open(join(path_out, "report.txt"), "w") as f:
+        f.write(report)
 
 
 if __name__ == "__main__":

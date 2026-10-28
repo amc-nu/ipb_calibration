@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Single-shot Target-based Calibration, is it possible?</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{color-scheme:light;--bg:#fff;--card:#fff;--ink:#1b2430;--mute:#354252;--line:#dde2e8;--acc:#2f6fdb;--ok:#1f8a4c;--bad:#c4362f;--warn:#8f5d0c;--code:#eef1f5}
+*{box-sizing:border-box}
+::selection{background:rgba(47,111,219,.28)}
+.scroll,pre{scrollbar-color:var(--line) transparent}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+html{background:#92B0E8;background:radial-gradient(at left bottom,#92B0E8 2%,#EEEEEE 100%);background-attachment:fixed;min-height:100%}
+body{margin:0;background:transparent;color:var(--ink);font:15px/1.5 'Jost',system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{padding:24px 16px 8px;max-width:1400px;margin:0 auto}
+h1{margin:0 0 4px;font-size:26px} h2{font-size:19px;margin:0 0 10px} h3{font-size:15px;margin:14px 0 6px}
+main{max-width:1400px;margin:0 auto;padding:0 16px 48px}
+section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin:16px 0}
+.mute{color:var(--mute)} .ok{color:var(--ok);font-weight:600} .bad{color:var(--bad);font-weight:600}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 12px} .kv b{color:var(--mute);font-weight:500}
+table{border-collapse:collapse;width:100%;font-size:12.5px;font-variant-numeric:tabular-nums}
+th,td{padding:4px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th{position:sticky;top:0;background:#f3f5f8;color:var(--mute);font-weight:600;cursor:default}
+td:first-child,th:first-child,td.l,th.l{text-align:left}
+.scroll{overflow:auto;max-height:520px;border:1px solid var(--line);border-radius:6px}
+tr.fail td{color:var(--bad)} tr.grp td{background:var(--code);font-weight:600;text-align:left}
+tr.sel td{background:rgba(47,111,219,.12)} tr.click{cursor:pointer} tr.click:hover td,tr.click:focus-visible td{background:rgba(47,111,219,.07)}
+td.good{color:var(--ok)} td.warn{color:var(--warn)} td.badc{color:var(--bad)}
+select,input[type=range],button{font:inherit;color:var(--ink)}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+select,button{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:5px 9px}
+button{cursor:pointer} button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+pre{background:var(--code);padding:10px;border-radius:6px;overflow:auto;max-height:360px;font-size:12px}
+details{margin:8px 0} summary{cursor:pointer;color:var(--acc)}
+.charts{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(330px,1fr))}
+.chart{border:1px solid var(--line);border-radius:8px;padding:8px} .chart svg{width:100%;height:auto;display:block}
+.chart text{fill:var(--mute);font-size:11px} .legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;margin:6px 0}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px}
+.viewer{display:grid;gap:12px;grid-template-columns:minmax(0,3fr) minmax(0,2fr)}
+@media (max-width:1000px){.viewer{grid-template-columns:1fr}}
+.big{width:100%;border-radius:6px;border:1px solid var(--line);background:#000;display:block;min-height:120px}
+.thumbs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.thumbs figure{margin:0;cursor:pointer;border:2px solid transparent;border-radius:6px;position:relative}
+.thumbs figure.sel{border-color:var(--acc)} .thumbs img{width:100%;display:block;border-radius:4px;background:#000;min-height:40px}
+.thumbs figcaption{position:absolute;left:4px;top:3px;font-size:10px;background:rgba(0,0,0,.6);color:#fff;padding:0 4px;border-radius:3px}
+#gl{width:100%;height:560px;border-radius:6px;border:1px solid var(--line);background:#0d1117;position:relative}
+.tabs{display:flex;gap:6px;margin:10px 0}
+.pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11.5px;border:1px solid var(--line);color:var(--mute)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Single-shot Target-based Calibration, is it possible?</h1>
+  <div class="mute">Joint intrinsic/extrinsic calibration (bundle adjustment: AprilTag corners + LiDAR point-to-plane against a TLS-like reference cloud) of simulated Isaac Sim captures, compared with the simulator ground truth.</div>
+</header>
+<main>
+
+<section id="rig">
+  <h2>Sensor rig</h2>
+  <div class="grid" id="rigcards"></div>
+  <p class="mute">Layout from <code>isaac/configs/calibration_box_tag36h11.config.yaml</code>: sensors sit on a 10 m x 2 m box (cameras z=2.7 m, LiDARs z=1.9-2.9 m): four corner cameras looking 45deg outward, four cameras and four XT32 LiDARs looking along the box axes, a duplicate north camera 0.5 m beside <i>camera_north</i>, and four OS1 LiDARs at the corners. Extrinsics are reported relative to <i>camera_corner_ne</i> (reference camera, tied to the map by a 1e-3 prior). Initial extrinsics in all runs = ground truth. Errors: translation = |t<sub>result</sub> - t<sub>GT</sub>|, rotation = angle of R<sub>GT</sub><sup>T</sup> R<sub>result</sub>; err/&sigma; = largest |t error| / predicted &sigma; over the axes.</p>
+  <p class="mute"><b>Note, experiment F:</b> the 10 m wide box does not fit a 10x10 m room (end cameras would sit in the walls), so F uses the same rig with all x/y offsets scaled by 0.5 (5 m x 1 m box, same heights and orientations).</p>
+</section>
+
+<section id="summary">
+  <h2>All experiments</h2>
+  <div class="bar" id="filters"></div>
+  <div class="scroll" style="max-height:640px"><table id="sumtab"></table></div>
+  <p class="mute">Click a row to open the experiment below. Columns: boards placed in the scene / unique tags actually detected; reproj = corner-weighted RMSE over cameras [px]; f/pp = focal length / principal point error vs GT [px] (mean over cameras); cam t, LiDAR t = extrinsic translation error vs GT [mm] (mean / max; reference camera excluded); rot = max rotation error [deg]; err/&sigma; max over all sensors (&lesssim;3 consistent with the predicted precision, &gg;3 unmodelled bias); min corners = fewest detected corners in any camera.</p>
+</section>
+
+<section id="trends">
+  <h2>Accuracy vs number of targets</h2>
+  <div class="legend" id="legend"></div>
+  <div class="charts" id="charts"></div>
+  <p class="mute">Each point is one converged experiment, red crosses at the top mark a failed solve. X axis: boards placed (log).</p>
+</section>
+
+<section id="spingrid">
+  <h2>Spin: minimum number of targets and rotation positions</h2>
+  <p class="mute">10x10x3 m room, boards only on the 4 walls and the floor, rig spinning in place (rig x/y offsets halved). Rows: boards in the scene (N), columns: rotation positions used (K, evenly spaced over 360°; K=1 is a single shot). Cell: focal-length error [px] · max camera translation error [mm] (hover: LiDAR plane-to-plane distance); P grids = N boards on each of the 4 walls and the floor (rows show the total); green = camera t &lt; 10 mm, amber &lt; 25 mm, red worse, × = did not converge, blank = not run. Click a cell to open it.</p>
+  <div id="gridbox"></div>
+</section>
+
+<section id="prev">
+  <h2>Earlier single-shot experiments A-C3b <span class="mute">(spin rig: pinhole front + fisheye rear camera, 2 OS1 LiDARs; from CLAUDE.md)</span></h2>
+  <div class="scroll"><table id="prevtab"></table></div>
+</section>
+
+<section id="explorer">
+  <h2>Experiment explorer</h2>
+  <div class="bar"><label>Experiment <select id="expsel"></select></label></div>
+  <div id="expinfo"></div>
+  <div id="expbody"></div>
+</section>
+<section id="compare">
+  <h2>Metric comparison across all experiments</h2>
+  <div class="bar"><button id="cmplog">log scale</button><button id="cmpsort">order: by experiment</button><span class="mute">One bar per converged experiment, grouped as in the table above; click a bar to open that experiment in the explorer.</span></div>
+  <div id="best" style="border:1px solid var(--ok);border-radius:8px;padding:10px 12px;margin:8px 0"></div>
+  <div class="legend" id="cmplegend"></div>
+  <div class="charts" id="cmpcharts" style="grid-template-columns:repeat(auto-fit,minmax(min(520px,100%),1fr))"></div>
+  <p class="mute" id="cmpfail"></p>
+</section>
+</main>
+
+<script src="lib/three.min.js"></script>
+<script src="lib/OrbitControls.js"></script>
+<script>
+const EXPS = /*EXPS*/[];
+const PREV = /*PREV*/[];
+const $ = s => document.querySelector(s);
+const el = (t, a = {}, ...k) => { const e = document.createElement(t); if (a.onclick && !['button', 'a', 'select', 'input'].includes(t)) { a.tabindex = 0; a.onkeydown = ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); ev.target.click(); } }; } for (const [x, y] of Object.entries(a)) { if (y === false) continue; x === 'class' ? e.className = y : (x.startsWith('on') || x === 'innerHTML' || x === 'selected' || x === 'checked') ? e[x] = y : e.setAttribute(x, y); } k.flat().forEach(c => e.append(c)); return e; };
+const f = (v, d = 2) => v == null || isNaN(v) ? '–' : Number(v).toFixed(d);
+const GROUPS = { 'D': 'D  A3 targets, 20x20x8 m room', 'E': 'E  1 m targets, 20x20x8 m room', 'F-a3': 'F  A3 targets, 10x10x3 m room', 'F-1m': 'F  1 m targets, 10x10x3 m room', 'W-a3': 'W  spin, A3 boards on walls + floor, 10x10x3 m room', 'W-09': 'W  spin, 0.9 m boards on walls + floor, 10x10x3 m room', 'P-a3': 'P  spin, A3 boards, N per face on 4 walls + floor, 10x10x3 m room', 'P-09': 'P  spin, 0.9 m boards, N per face on 4 walls + floor, 10x10x3 m room', 'G-s': 'G  multi-tag panels, 10x10x3 m room', 'G-b': 'G  multi-tag panels, 20x20x8 m room', 'I': 'I  tag-sets (0.9 m), 5 m rig, 10x10x3 m room', 'K': 'K  40 boards of 3x3 tags (0.9 m), 5 m rig, 20x20x3 m room', 'J': 'J  7 boards of 2x2 tags (0.9 m), 5 m rig, 10x10x3 / 20x20x3 m room', 'S': 'S  spin in place, C2 scene (0.75 m tags)', 'C': 'C  corridor trajectory (0.75 m tags)' };
+EXPS.sort((a, b) => b.n_boards - a.n_boards || a.name.localeCompare(b.name));
+const SWEEP = ['D', 'E', 'F-a3', 'F-1m'];
+const COL = { 'G-s': '#d4a017', 'G-b': '#5b3a29', 'I': '#6a4fd1', 'J': '#d14fa0', 'K': '#2a9d8f', 'P-a3': '#c0392b', 'P-09': '#16a085', 'W-a3': '#3b8f9a', 'W-09': '#a8742b', 'S': '#8a8f98', 'C': '#8e6bd8', 'D': '#2f6fdb', 'E': '#e07b24', 'F-a3': '#1f9d6a', 'F-1m': '#d1457a' };
+let gfilter = 'all';
+
+// ---- rig cards
+(function () {
+  const e = EXPS.find(x => x.converged) || EXPS[0]; if (!e) return;
+  const c = $('#rigcards');
+  const card = (t, kv) => c.append(el('div', {}, el('h3', {}, t), el('div', { class: 'kv' }, kv.flatMap(([a, b]) => [el('b', {}, a), el('span', {}, b)]))));
+  card('Cameras', [['count', e.rig.cameras], ['model', e.rig.cam_model], ['FOV', '120° x 96° (fx=831.4, cx=1440, cy=930)'], ['distortion', 'none (plumb_bob, zeros)']]);
+  card('LiDARs', [['count', e.rig.lidars], ['models', e.rig.lidar_models.join(', ')], ['frames', '4 corner OS1 (128 ch), 4 axis XT32 (32 ch)'], ['output', 'global frame PCD → sensor-frame .npy for the calibration']]);
+  card('Calibration', [['solver', 'Levenberg-Marquardt, 2 stages (cameras+poses+tags, then LiDARs)'], ['std pix / tags / lidar', '0.2 px / 2 mm / 10 mm'], ['LiDAR points', '2500 per scan'], ['tag family', 'tag36h11']]);
+})();
+
+// ---- overall ranking score: every error metric same weight; score = mean over metrics of (rank among converged - 1) / (N - 1), 0 = best in every metric, 1 = worst in every one
+const ERRKEYS = ['reproj', 'f_mean', 'pp_mean', 'cam_t_mean', 'cam_t_max', 'cam_rot_max', 'lid_t_mean', 'lid_t_max', 'lid_rot_max', 'p2p_rmse_mm', 'p2p_max_mm', 'err_sigma_max'];
+(function () {
+  const es = EXPS.filter(e => e.converged && e.summary);
+  es.forEach(e => e._rk = []);
+  ERRKEYS.forEach(k => { const r = es.filter(e => e.summary[k] != null && !isNaN(e.summary[k])).sort((a, b) => a.summary[k] - b.summary[k]); r.forEach((e, i) => e._rk.push(r.length > 1 ? i / (r.length - 1) : 0)); });
+  es.forEach(e => e.summary.rank_score = e._rk.length ? e._rk.reduce((a, b) => a + b, 0) / e._rk.length : null);
+})();
+
+// ---- summary table
+const SUMCOLS = [
+  ['Experiment', e => e.title, 'l'], ['room', e => `${e.room.x}x${e.room.y}x${e.room.h} m`, 'l'], ['target', e => e.plate ? `${e.plate} m plate / ${e.tag} m tag` : '–', 'l'],
+  ['frames', e => e.frames], ['rank score', e => e.converged ? f(e.summary.rank_score, 3) : '–'], ['boards', e => e.n_boards], ['tags det.', e => e.converged ? e.tags_detected : '–'], ['min corners', e => e.converged ? e.summary.min_corners : '–'], ['init: tags in largest plane (min over cams)', e => e.init.cams ? (e.init.cams < e.rig.cameras ? 0 : Math.min(...e.init.tags)) : '–'], ['init f range [px]', e => e.init.fmin == null ? '–' : `${f(e.init.fmin, 0)}–${f(e.init.fmax, 0)}`],
+  ['reproj [px]', e => e.converged ? f(e.summary.reproj, 3) : 'FAILED'], ['f err [px]', e => e.converged ? f(e.summary.f_mean) : '', null, v => v < .5 ? 'good' : v < 1 ? 'warn' : 'badc', e => e.converged ? e.summary.f_mean : null],
+  ['pp err [px]', e => e.converged ? f(e.summary.pp_mean) : ''],
+  ['cam t mean / max [mm]', e => e.converged ? `${f(e.summary.cam_t_mean, 1)} / ${f(e.summary.cam_t_max, 1)}` : '', null, v => v < 10 ? 'good' : v < 25 ? 'warn' : 'badc', e => e.converged ? e.summary.cam_t_max : null],
+  ['cam rot max [°]', e => e.converged ? f(e.summary.cam_rot_max, 3) : ''],
+  ['LiDAR t mean / max [mm]', e => e.converged ? `${f(e.summary.lid_t_mean, 1)} / ${f(e.summary.lid_t_max, 1)}` : '', null, v => v < 10 ? 'good' : v < 25 ? 'warn' : 'badc', e => e.converged ? e.summary.lid_t_max : null],
+  ['LiDAR rot max [°]', e => e.converged ? f(e.summary.lid_rot_max, 3) : ''],
+  ['LiDAR plane-plane rmse / max [mm]', e => e.converged ? `${f(e.summary.p2p_rmse_mm, 2)} / ${f(e.summary.p2p_max_mm, 2)}` : ''],
+  ['err/σ max', e => e.converged ? f(e.summary.err_sigma_max, 1) : '', null, v => v < 3 ? 'good' : v < 5 ? 'warn' : 'badc', e => e.converged ? e.summary.err_sigma_max : null],
+  ['σ0 cam', e => e.converged ? f(e.summary.sigma0_cam, 2) : ''],
+];
+function renderSummary() {
+  const t = $('#sumtab'); t.innerHTML = '';
+  t.append(el('thead', {}, el('tr', {}, SUMCOLS.map(c => el('th', c[2] ? { class: 'l' } : {}, c[0])))));
+  const tb = el('tbody');
+  Object.keys(GROUPS).forEach(g => {
+    if (gfilter !== 'all' && gfilter !== g) return;
+    const es = EXPS.filter(e => e.group === g); if (!es.length) return;
+    tb.append(el('tr', { class: 'grp' }, el('td', { colspan: SUMCOLS.length }, GROUPS[g])));
+    es.forEach(e => tb.append(el('tr', { class: 'click' + (e.converged ? '' : ' fail'), 'data-e': e.name, onclick: () => openExp(e.name, true) },
+      SUMCOLS.map(c => { const v = c[4] ? c[4](e) : null; return el('td', { class: (c[2] || '') + (v != null && c[3] ? ' ' + c[3](v) : '') }, String(c[1](e))); }))));
+  });
+  t.append(tb);
+}
+(function () {
+  const fb = $('#filters');
+  ['all', ...Object.keys(GROUPS)].forEach(g => fb.append(el('button', { class: g === gfilter ? 'on' : '', onclick: ev => { gfilter = g; [...fb.children].forEach(b => b.className = ''); ev.target.className = 'on'; renderSummary(); } }, g === 'all' ? 'all' : GROUPS[g].split('  ')[0] + ' ' + (GROUPS[g].match(/A3|1 m|0\.75|10x10|20x20/) || [''])[0])));
+  renderSummary();
+})();
+
+// ---- spin grids
+(function () {
+  const box = $('#gridbox');
+  [['P-a3', 'P: A3 boards, per face'], ['P-09', 'P: 0.9 m boards, per face'], ['W-a3', 'W: A3 boards (0.30 m plate)'], ['W-09', 'W: 0.9 m boards']].forEach(([g, t]) => {
+    const es = EXPS.filter(e => e.group === g && e.spin); if (!es.length) return;
+    const Ks = [...new Set(es.map(e => e.spin.K))].sort((a, b) => b - a), Ns = [...new Set(es.map(e => e.n_boards))].sort((a, b) => b - a);
+    const tb = el('table'); tb.append(el('thead', {}, el('tr', {}, el('th', { class: 'l' }, t + ': boards \\ positions'), Ks.map(k => el('th', {}, 'K=' + k)))));
+    tb.append(el('tbody', {}, Ns.map(n => el('tr', {}, el('td', { class: 'l' }, n + ' boards'), Ks.map(k => {
+      const e = es.find(x => x.n_boards === n && x.spin.K === k); if (!e) return el('td', {}, '');
+      if (!e.converged) return el('td', { class: 'badc click', style: 'cursor:pointer', onclick: () => openExp(e.name, true) }, '×');
+      const s = e.summary, c = s.cam_t_max < 10 ? 'good' : s.cam_t_max < 25 ? 'warn' : 'badc';
+      return el('td', { class: c, style: 'cursor:pointer', title: e.title + `: tags ${e.tags_detected}, reproj ${f(s.reproj, 3)} px, LiDAR t max ${f(s.lid_t_max, 1)} mm, LiDAR plane-plane rmse ${f(s.p2p_rmse_mm, 2)} mm`, onclick: () => openExp(e.name, true) }, `${f(s.f_mean, 1)} · ${f(s.cam_t_max, 0)}`);
+    })))));
+    box.append(el('div', { class: 'scroll', style: 'margin-bottom:14px' }, tb));
+  });
+  if (!box.children.length) $('#spingrid').style.display = 'none';
+})();
+
+// ---- previous experiments
+(function () {
+  const t = $('#prevtab'); const h = ['run', 'targets', 'K err front/rear [px]', 'rear cam t [mm] (err/σ)', 'rear dist RMSE', 'LiDAR t / rot'];
+  t.append(el('thead', {}, el('tr', {}, h.map((x, i) => el('th', i < 2 ? { class: 'l' } : {}, x)))));
+  t.append(el('tbody', {}, PREV.map(r => el('tr', {}, [el('td', { class: 'l' }, r.run), el('td', { class: 'l' }, r.targets), el('td', {}, r.k), el('td', {}, r.t), el('td', {}, r.dist), el('td', {}, r.lidar)]))));
+})();
+
+// ---- trend charts
+(function () {
+  const lg = $('#legend'); Object.keys(GROUPS).filter(g => SWEEP.includes(g)).forEach(g => lg.append(el('span', {}, el('i', { style: `background:${COL[g]}` }), GROUPS[g])));
+  const specs = [['focal length error, mean [px]', e => e.summary.f_mean], ['camera translation error, max [mm]', e => e.summary.cam_t_max], ['LiDAR translation error, max [mm]', e => e.summary.lid_t_max], ['err/σ max', e => e.summary.err_sigma_max]];
+  const pts = EXPS.filter(e => SWEEP.includes(e.group)); if (!pts.length) { $('#trends').style.display = 'none'; return; }
+  const xs = pts.map(e => e.n_boards), x0 = Math.log(Math.min(...xs) * .8), x1 = Math.log(Math.max(...xs) * 1.2);
+  specs.forEach(([title, fn]) => {
+    const ys = pts.filter(e => e.converged).map(fn).filter(v => v != null); const ymax = Math.max(...ys) * 1.15 || 1;
+    const W = 360, H = 230, L = 40, R = 10, T = 16, B = 30, X = n => L + (Math.log(n) - x0) / (x1 - x0) * (W - L - R), Y = v => T + (1 - v / ymax) * (H - T - B);
+    let s = `<svg viewBox="0 0 ${W} ${H}"><text x="${L}" y="11" style="fill:var(--ink);font-size:12px">${title}</text>`;
+    for (let i = 0; i <= 4; i++) { const v = ymax * i / 4; s += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)"/><text x="${L - 4}" y="${Y(v) + 3}" text-anchor="end">${v < 10 ? v.toFixed(2) : v.toFixed(0)}</text>`; }
+    [5, 10, 20, 50, 100, 300].filter(n => Math.log(n) > x0 && Math.log(n) < x1).forEach(n => s += `<text x="${X(n)}" y="${H - 14}" text-anchor="middle">${n}</text>`);
+    Object.keys(GROUPS).filter(g => SWEEP.includes(g)).forEach(g => {
+      const es = pts.filter(e => e.group === g).sort((a, b) => a.n_boards - b.n_boards), ok = es.filter(e => e.converged && fn(e) != null);
+      s += `<polyline fill="none" stroke="${COL[g]}" stroke-width="1.6" points="${ok.map(e => X(e.n_boards) + ',' + Y(fn(e))).join(' ')}"/>`;
+      ok.forEach(e => s += `<circle cx="${X(e.n_boards)}" cy="${Y(fn(e))}" r="3.5" fill="${COL[g]}"><title>${e.title}: ${f(fn(e), 2)}</title></circle>`);
+      es.filter(e => !e.converged).forEach(e => s += `<text x="${X(e.n_boards)}" y="${T + 8}" text-anchor="middle" style="fill:var(--bad);font-size:13px;font-weight:700">×<title>${e.title}: failed</title></text>`);
+    });
+    $('#charts').append(el('div', { class: 'chart', innerHTML: s + '</svg>' }));
+  });
+})();
+
+// ---- explorer
+const sel = $('#expsel');
+Object.keys(GROUPS).forEach(g => { const og = el('optgroup', { label: GROUPS[g] }); EXPS.filter(e => e.group === g).forEach(e => og.append(el('option', { value: e.name }, e.title + (e.converged ? '' : '  [failed]')))); if (og.children.length) sel.append(og); });
+sel.onchange = () => openExp(sel.value);
+let cur = null, state = { cam: null, frame: 0, mode: 'proj' }, three = null;
+
+function openExp(name, scroll) {
+  cur = EXPS.find(e => e.name === name); sel.value = name;
+  document.querySelectorAll('#sumtab tr.click').forEach(r => r.classList.toggle('sel', r.dataset.e === name));
+  const e = cur, ex = $('#expinfo'), bd = $('#expbody'); ex.innerHTML = bd.innerHTML = ''; three && three.stop();
+  ex.append(el('h3', {}, e.title, ' ', el('span', { class: 'pill ' + (e.converged ? 'ok' : 'bad') }, e.converged ? 'converged' : 'did not converge'), e.converged ? el('span', { class: 'pill ok', title: 'overall ranking score (0 = best, see comparison section)' }, 'score ' + f(e.summary.rank_score, 3)) : ''), el('p', {}, e.desc),
+    el('div', { class: 'grid' },
+      el('div', { class: 'kv' }, ...[['target family', e.family], ['target size', e.plate ? `plate ${e.plate} m, tag ${e.tag} m` : '–'], ['boards placed', e.n_boards], ['tags detected', e.converged ? e.tags_detected + ' (' + e.corner_obs + ' corner observations)' : '–'], ['frames', e.frames], ['ranking score', e.converged ? f(e.summary.rank_score, 3) + ' (0 = best)' : '–']].flatMap(([a, b]) => [el('b', {}, a), el('span', {}, b)])),
+      el('div', { class: 'kv' }, ...[['room', `${e.room.x} x ${e.room.y} x ${e.room.h} m${e.room.corridor ? ' (corridor openings in N/S walls)' : ''}`], ['rig', `${e.rig.cameras} cameras, ${e.rig.lidars} LiDARs`], ['rig span (x,y)', e.rig.span.join(' x ') + ' m'], ['dataset', e.dataset], ['results', 'output/exp_' + e.name]].flatMap(([a, b]) => [el('b', {}, a), el('span', {}, b)]))));
+  if (!e.converged) { bd.append(el('h3', {}, 'Failure'), el('p', {}, e.init.reason || 'see log'), el('p', { class: 'mute' }, `Initialisation: largest coplanar view per camera (tags) = [${e.init.tags.join(', ')}]${e.init.cams < e.rig.cameras ? ` (only ${e.init.cams} of ${e.rig.cameras} cameras reached the init)` : ''}; initial focal length range ${e.init.fmin == null ? 'n/a' : f(e.init.fmin, 0) + '–' + f(e.init.fmax, 0)} px (true 831).`), el('h3', {}, 'Solver log (tail)'), el('pre', {}, e.log_tail || 'no log')); return; }
+  // GT table
+  const cols = ['sensor', 'reproj [px]', 'corners', 'Δcx,Δcy [px]', 'Δfx,Δfy [px]', 't err x,y,z [mm]', '|t err| [mm]', 'rot err [°]', 'err/σ', 'LiDAR p2plane [mm]'];
+  const tb = el('table'); tb.append(el('thead', {}, el('tr', {}, cols.map((c, i) => el('th', i ? {} : { class: 'l' }, c)))));
+  tb.append(el('tbody', {}, e.rows.map(r => el('tr', {}, [r.sensor, r.reproj_rmse_px != null ? f(r.reproj_rmse_px, 3) : '–', r.n_corners ?? '–', r.dc_px ? r.dc_px.slice(0, 2).map(v => f(v, 2)).join(', ') : '–', r.dc_px ? r.dc_px.slice(2).map(v => f(v, 2)).join(', ') : '–',
+    r.t_err_mm.map(v => f(v, 1)).join(', '), f(r.t_err_norm_mm, 1), f(r.rot_err_deg, 3), r.err_sigma != null ? f(r.err_sigma, 1) : '–', r.kind === 'lidar' ? f(r.p2plane_rmse_mm, 3) : '–'].map((v, i) => el('td', i ? {} : { class: 'l' }, String(v)))))));
+  bd.append(el('h3', {}, 'Comparison with ground truth (extrinsics relative to camera_corner_ne)'), el('div', { class: 'scroll' }, tb),
+    el('details', {}, el('summary', {}, 'report.txt (full solver metrics and GT table)'), el('pre', {}, e.report_txt)),
+    el('details', {}, el('summary', {}, 'data_report.txt (input quality check)'), el('pre', {}, e.data_report || '–')));
+  // viewer
+  bd.append(el('h3', {}, 'Verification dataset'), el('div', { class: 'tabs' }, ...[['proj', 'LiDAR projection'], ['reproj', 'Corner reprojection'], ['both', 'Both']].map(([k, t]) => el('button', { 'data-m': k, class: state.mode === k ? 'on' : '', onclick: ev => { state.mode = k; document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.m === k)); drawImages(); } }, t))),
+    el('div', { class: 'viewer' }, el('div', {}, el('div', { class: 'bar', id: 'fbar' }), el('div', { id: 'imgs' })), el('div', {}, el('div', { class: 'bar' }, el('b', {}, 'All cameras'), el('span', { class: 'mute' }, '(click to enlarge)')), el('div', { class: 'thumbs', id: 'thumbs' }))),
+    el('h3', {}, '3D point clouds (LiDAR scans transformed with the estimated extrinsics)'), el('div', { class: 'bar', id: 'gbar' }), el('div', { id: 'gl' }));
+  if (!e.cams.includes(state.cam)) state.cam = e.cams[0]; state.frame = Math.min(state.frame, e.verif_frames.length - 1);
+  const fb = $('#fbar'); if (e.verif_frames.length > 1) { fb.append('frame ', el('input', { type: 'range', 'aria-label': 'frame', min: 0, max: e.verif_frames.length - 1, value: state.frame, oninput: ev => { state.frame = +ev.target.value; fl.textContent = e.verif_frames[state.frame]; drawImages(); } })); }
+  const fl = el('span', {}, e.verif_frames[state.frame]); fb.append(fl); fb.append(el('select', { onchange: ev => { state.cam = ev.target.value; drawImages(); } }, e.cams.map(c => el('option', { value: c, selected: c === state.cam }, c.replace('image_raw', '')))));
+  drawImages(); init3D(e); if (scroll) $('#explorer').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion:reduce)').matches ? 'auto' : 'smooth' });
+}
+const src = (e, cam, fr, kind) => `images/${e.name}/${cam}/${fr}_${kind}.jpg`;
+function drawImages() {
+  const e = cur, fr = e.verif_frames[state.frame], d = $('#imgs'); d.innerHTML = '';
+  const kinds = state.mode === 'both' ? ['proj', 'reproj'] : [state.mode];
+  kinds.forEach(k => d.append(el('div', {}, el('div', { class: 'mute' }, state.cam.replace('image_raw', '') + ' · ' + fr + ' · ' + (k === 'proj' ? 'LiDAR points projected (colour = depth)' : 'detected ○ vs projected + corners (error ×50)')), el('a', { href: src(e, state.cam, fr, k), target: '_blank' }, el('img', { class: 'big', loading: 'lazy', src: src(e, state.cam, fr, k), alt: state.cam.replace('image_raw', '') + ' ' + fr + ' ' + k, onerror: ev => ev.target.replaceWith(el('p', { class: 'mute' }, 'not available for this frame (no tag detections)')) })))));
+  const th = $('#thumbs'); th.innerHTML = '';
+  const tk = state.mode === 'reproj' ? 'reproj' : 'proj';
+  e.cams.forEach(c => th.append(el('figure', { class: c === state.cam ? 'sel' : '', onclick: () => { state.cam = c; const s = $('#fbar select'); if (s) s.value = c; drawImages(); } }, el('img', { loading: 'lazy', src: src(e, c, fr, tk), alt: c.replace('image_raw', '') }), el('figcaption', {}, c.replace('image_raw', '').replace('camera_', '')))));
+}
+
+// ---- 3D
+const PAL = ['#ff5964', '#ffb140', '#ffe66d', '#7bd389', '#35c4d8', '#4d8af0', '#a06cf0', '#f06cc8'];
+function init3D(e) {
+  const box = $('#gl'), bar = $('#gbar');
+  const go = () => build3D(e, box, bar);
+  if (window.CLOUDS && CLOUDS[e.name]) go(); else { const s = el('script', { src: `data/${e.name}.js` }); s.onload = go; s.onerror = () => box.append(el('p', { style: 'color:#ccc;padding:12px' }, 'no point cloud data')); document.head.append(s); }
+}
+function build3D(e, box, bar) {
+  if (cur !== e) return;
+  const C = CLOUDS[e.name], lo = C.lo, hi = C.hi, names = Object.keys(C.lidars);
+  const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0d1117);
+  const cam = new THREE.PerspectiveCamera(50, box.clientWidth / box.clientHeight, .1, 500); cam.up.set(0, 0, 1);
+  const rr = new THREE.WebGLRenderer({ antialias: true }); rr.setSize(box.clientWidth, box.clientHeight); box.innerHTML = ''; box.append(rr.domElement);
+  const ctl = new THREE.OrbitControls(cam, rr.domElement);
+  const ctr = lo.map((v, i) => (v + hi[i]) / 2); const span = Math.max(hi[0] - lo[0], hi[1] - lo[1]);
+  ctl.target.set(...ctr); cam.position.set(ctr[0] + span * .6, ctr[1] - span * .8, ctr[2] + span * .5); ctl.update();
+  const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+  const groups = {}, mats = []; let byPose = false;
+  names.forEach((n, i) => {
+    const L = C.lidars[n], q = new Uint16Array(b64(L.xyz).buffer), rgb = b64(L.rgb), pos = new Float32Array(L.n * 3), col = new Float32Array(L.n * 3), col2 = new Float32Array(L.n * 3), c0 = new THREE.Color(PAL[i % PAL.length]);
+    for (let j = 0; j < L.n; j++) { for (let k = 0; k < 3; k++) pos[j * 3 + k] = lo[k] + q[j * 3 + k] / 65535 * (hi[k] - lo[k]); col[j * 3] = c0.r; col[j * 3 + 1] = c0.g; col[j * 3 + 2] = c0.b; for (let k = 0; k < 3; k++) col2[j * 3 + k] = rgb[j * 3 + k] / 255; }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.BufferAttribute(col, 3)); g.userData = { col, col2 };
+    const m = new THREE.PointsMaterial({ size: .05, vertexColors: true }); mats.push(m); const p = new THREE.Points(g, m); scene.add(p); groups[n] = p;
+  });
+  const rm = e.room, rx = rm.x / 2, ry = rm.y / 2, ln = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(rm.x, rm.y, rm.h)), new THREE.LineBasicMaterial({ color: 0x556070 }));
+  ln.position.set(0, 0, rm.h / 2); scene.add(ln); scene.add(new THREE.AxesHelper(2));
+  bar.innerHTML = '';
+  names.forEach((n, i) => bar.append(el('label', { style: `color:${PAL[i % PAL.length]}` }, el('input', { type: 'checkbox', checked: '', onchange: ev => groups[n].visible = ev.target.checked }), ' ' + n.replace('points', '').replace('lidar_', ''), ' ')));
+  bar.append(' size ', el('input', { type: 'range', 'aria-label': 'point size', min: 1, max: 20, value: 5, oninput: ev => mats.forEach(m => m.size = ev.target.value / 100) }),
+    el('button', { onclick: ev => { byPose = !byPose; names.forEach(n => { const g = groups[n].geometry; g.attributes.color.array.set(byPose ? g.userData.col2 : g.userData.col); g.attributes.color.needsUpdate = true; }); } }, 'toggle colour: lidar / frame'),
+    el('span', { class: 'mute' }, `${names.length} LiDARs, ${MAXPTS(C)} pts shown (subsampled); thin grey box = room`));
+  const ro = new ResizeObserver(() => { if (!box.clientWidth) return; rr.setSize(box.clientWidth, box.clientHeight); cam.aspect = box.clientWidth / box.clientHeight; cam.updateProjectionMatrix(); }); ro.observe(box);
+  let run = true; const loop = () => { if (!run) return; requestAnimationFrame(loop); rr.render(scene, cam); }; loop();
+  three = { stop: () => { run = false; ro.disconnect(); rr.dispose(); } };
+}
+const MAXPTS = C => Object.values(C.lidars).reduce((a, l) => a + l.n, 0);
+
+if (EXPS.length) openExp((EXPS.find(e => e.name === 'BoxD_n75') || EXPS.find(e => e.converged) || EXPS[0]).name);
+
+// ---- comparison of every metric over every experiment
+(function () {
+  const specs = [['reprojection RMSE [px]', 'reproj'], ['focal length error, mean [px]', 'f_mean'], ['principal point error, mean [px]', 'pp_mean'], ['camera translation error, mean [mm]', 'cam_t_mean'], ['camera translation error, max [mm]', 'cam_t_max'],
+    ['camera rotation error, max [°]', 'cam_rot_max'], ['LiDAR translation error, mean [mm]', 'lid_t_mean'], ['LiDAR translation error, max [mm]', 'lid_t_max'], ['LiDAR rotation error, max [°]', 'lid_rot_max'],
+    ['LiDAR plane-to-plane RMSE [mm]', 'p2p_rmse_mm'], ['LiDAR plane-to-plane max [mm]', 'p2p_max_mm'], ['err/σ max', 'err_sigma_max'], ['σ0 cameras', 'sigma0_cam']];
+  const gs = Object.keys(GROUPS), es = EXPS.filter(e => e.converged && e.summary).sort((a, b) => gs.indexOf(a.group) - gs.indexOf(b.group) || b.n_boards - a.n_boards);
+  const lg = $('#cmplegend'); gs.filter(g => es.some(e => e.group === g)).forEach(g => lg.append(el('span', {}, el('i', { style: `background:${COL[g] || '#888'}` }), GROUPS[g])));
+  $('#cmpfail').textContent = 'Failed (not plotted): ' + (EXPS.filter(e => !e.converged).map(e => e.title).join('; ') || 'none');
+  const errKeys = ERRKEYS;
+  specs.unshift(['overall ranking score (mean normalised rank over all error metrics, 0 = best)', 'rank_score']);
+  $('#best').innerHTML = `<b>How the overall ranking is weighted.</b> Each of the ${errKeys.length} error metrics (${specs.slice(1).filter(x => x[1] !== 'sigma0_cam').map(x => x[0].replace(/ \[.*\]/, '')).join('; ')}) `
+    + `ranks all ${es.length} converged experiments from lowest to highest error; the rank is normalised to 0 (lowest error of all) .. 1 (highest). The score is the plain mean of these normalised ranks, i.e. <b>every metric has the same weight</b> `
+    + `(camera, LiDAR and consistency metrics count by how many entries they have: 5 camera, 3 LiDAR, 2 plane-to-plane, 1 err/σ, 1 reprojection). The size of an error does not matter, only its order; σ0 is not an error and is not counted; `
+    + `a missing value skips that metric. Lower is better. A low score means consistently low error, not the best in every metric; LiDAR and plane-to-plane numbers are optimistic when the reference cloud comes from the same scan.`;
+  const ename = e => { const t = e.name.replace(/^Box/, '').split('_'); return t[0] === 'I' ? 'I1' : t[0] === 'G' ? t.join(' ') : e.name === 'BoxI2_v2' || e.name === 'BoxI2_big' || e.name === 'BoxI3_big' || t[0] === 'J' ? e.name.slice(3) : t[0]; };  // I = first I run, G keeps room + scene
+  const lab = e => `${e.spin || ['S', 'W-a3', 'W-09', 'P-a3', 'P-09'].includes(e.group) ? 'spin' : e.frames > 1 ? 'drive, ' + e.frames + ' frames' : 'single-shot'} ${ename(e)}, ${e.n_boards} boards`;
+  let log = false, byErr = false;
+  function draw() {
+    const box = $('#cmpcharts'); box.innerHTML = '';
+    specs.forEach(([title, key]) => {
+      const rows = es.filter(e => e.summary[key] != null && !isNaN(e.summary[key])); if (!rows.length) return;
+      if (byErr) rows.sort((a, b) => a.summary[key] - b.summary[key]);
+      const vals = rows.map(e => e.summary[key]), pos = vals.filter(v => v > 0), lo = Math.log10(Math.min(...pos) * .8), hi = Math.log10(Math.max(...vals) * 1.1), max = Math.max(...vals) * 1.1 || 1;
+      const rh = 13, L = 215, R = 50, T = 20, W = 520, H = T + rows.length * rh + 6, X = v => log ? L + (Math.log10(Math.max(v, 1e-12)) - lo) / (hi - lo) * (W - L - R) : L + v / max * (W - L - R);
+      let s = `<svg viewBox="0 0 ${W} ${H}"><text x="4" y="12" style="fill:var(--ink);font-size:12px">${title}${log ? ' (log)' : ''}</text>`;
+      rows.forEach((e, i) => { const y = T + i * rh, v = e.summary[key], w = Math.max(1, X(v) - L), c = COL[e.group] || '#888';
+        s += `<text x="${L - 4}" y="${y + 8}" text-anchor="end" style="font-size:10px">${lab(e)}</text><rect data-n="${e.name}" x="${L}" y="${y + 1}" width="${w}" height="${rh - 3}" fill="${c}" style="cursor:pointer"><title>${e.title}: ${f(v, 3)}</title></rect>`
+          + `<text x="${L + w + 3}" y="${y + 8}" style="font-size:10px">${v < 10 ? v.toFixed(2) : v.toFixed(1)}</text>`; });
+      const d = el('div', { class: 'chart', innerHTML: s + '</svg>' }); d.onclick = ev => { const n = ev.target.dataset && ev.target.dataset.n; if (n) { sel.value = n; openExp(n); $('#explorer').scrollIntoView(); } };
+      box.append(d);
+    });
+  }
+  $('#cmpsort').onclick = ev => { byErr = !byErr; ev.target.textContent = byErr ? 'order: lowest → largest error' : 'order: by experiment'; ev.target.className = byErr ? 'on' : ''; draw(); };
+  $('#cmplog').onclick = ev => { log = !log; ev.target.className = log ? 'on' : ''; draw(); };
+  draw();
+})();
+</script>
+</body>
+</html>

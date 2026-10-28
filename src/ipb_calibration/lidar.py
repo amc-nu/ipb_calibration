@@ -48,7 +48,7 @@ class LinearLidarIntrinsics:
         return J[:, :, self.estimate]
 
     def update_params(self, dparams):
-        db, ds = np.split(dparams.flatten(), [self.estimate[0]])
+        db, ds = np.split(dparams.flatten(), [int(self.estimate[0])])
         if len(db) == 1:
             self.bias += db
         if len(ds) == 1:

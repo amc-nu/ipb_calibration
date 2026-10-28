@@ -17,7 +17,9 @@ import apriltag
 
 
 def detect_apriltags(working_dir:str, max_pyramid_level:int = 2,
-                                   visualize_tags:bool = False) ->np.ndarray:
+                                   visualize_tags:bool = False,
+                                   tag_family:str = 'tag36h11',
+                                   tag_size:float = None, pixel_size:float = None) ->np.ndarray:
   """
     Given a set of intensity and coordinates images (of an orthophoto), extract apriltag coordinates
     on these images. 
@@ -60,7 +62,7 @@ def detect_apriltags(working_dir:str, max_pyramid_level:int = 2,
   Zimage = tifffile.imread(os.path.join(working_dir, 'zcoord.tif'))
   
   #%% Detect
-  detector = apriltag.apriltag("tag36h11", decimate=1, maxhamming=2)
+  detector = apriltag.apriltag(tag_family, decimate=1, maxhamming=2)
   
   all_tags_2D = dict() # Tags with ID as keys, [r,c] as values
   
@@ -86,6 +88,11 @@ def detect_apriltags(working_dir:str, max_pyramid_level:int = 2,
       #Our ID scheme: 100* (apriltag_id) + [1,2,3,4] for the four corners
       ids  = np.arange(100*results[i]['id'] + 1, 100*results[i]['id'] + 5)
       corners = results[i]['lb-rb-rt-lt']
+      # Reject detections whose metric edge length is >25% off the expected tag size
+      if tag_size is not None:
+        edge = np.linalg.norm(corners[1] - corners[0]) * level_factor * pixel_size
+        if abs(edge / tag_size - 1) > 0.25:
+          continue
       # Use our sequence for the numbering: upper left, upper right , bottom left, bottom right
       corners = corners[[3, 2, 0, 1]]
       

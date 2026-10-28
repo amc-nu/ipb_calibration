@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multi-sensor calibration in simulation: process and findings</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#1b2430;--mute:#334050;--acc:#2358c2;--card:rgba(255,255,255,.62);--line:rgba(27,36,48,.14);--ok:#1f8a4c;--bad:#c4362f;--single:#2f6fdb;--spin:#1f9d6a;--trajectory:#e07b24;--spin-ink:#12704a;--traj-ink:#a24b08}
+*{box-sizing:border-box}
+html{background:#92B0E8;background:radial-gradient(at left bottom,#92B0E8 2%,#EEEEEE 100%);background-attachment:fixed}
+body{margin:0;font-family:'Jost',system-ui,sans-serif;color:var(--ink);font-size:17px;line-height:1.35;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+#tools{position:fixed;top:12px;right:16px;z-index:9}
+#tools button{font:500 15px 'Jost',system-ui,sans-serif;background:var(--acc);color:#fff;border:0;border-radius:8px;padding:9px 16px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.2)}
+#tools button:hover{background:#1c47a0}
+#tools button:focus-visible,a:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+::selection{background:rgba(35,88,194,.28)}
+#deck{display:flex;flex-direction:column;align-items:center;gap:20px;padding:20px 0 40px}
+.slide{width:1280px;height:720px;flex:none;position:relative;overflow:hidden;padding:34px 48px 30px;zoom:var(--s,1);
+  background:#92B0E8;background:radial-gradient(at left bottom,#92B0E8 2%,#EEEEEE 100%);border-radius:14px;box-shadow:0 6px 28px rgba(27,36,48,.22);display:flex;flex-direction:column}
+.kick{font-size:14px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);font-weight:500}
+h1{text-wrap:balance;font-size:46px;line-height:1.05;margin:6px 0 10px;font-weight:600}
+h2{text-wrap:balance;font-size:32px;margin:2px 0 14px;font-weight:600}
+h3{font-size:18px;margin:0 0 6px;font-weight:600}
+p{margin:0 0 8px;text-wrap:pretty} code{font-size:.9em;background:rgba(27,36,48,.07);padding:0 4px;border-radius:4px} .mute{color:var(--mute)} .sm{font-size:14px}
+.row{display:flex;gap:16px;flex:1;min-height:0} .col{display:flex;flex-direction:column;gap:12px;min-width:0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.card img{display:block;max-width:100%} ul{margin:4px 0 0;padding-left:18px} li{margin-bottom:4px}
+.cap{font-size:14px;color:var(--mute);margin-top:4px}
+.steps{display:flex;gap:10px;align-items:stretch;margin:6px 0 14px}
+.step{flex:1;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;position:relative}
+.step b{display:block;font-size:14px;color:var(--acc);letter-spacing:.08em}
+.step:not(:last-child):after{content:'\2192';position:absolute;right:-13px;top:38%;font-size:18px;color:var(--mute);z-index:2}
+.kpis{display:flex;gap:12px} .kpi{flex:1;text-align:center;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px}
+.kpi b{display:block;font-size:34px;font-weight:600;color:var(--acc)}
+table{border-collapse:collapse;width:100%;font-size:16px;font-variant-numeric:tabular-nums}
+th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:right} th{color:var(--mute);font-weight:500;font-size:14px}
+th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+.imgs{display:grid;gap:10px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.issues{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;flex:1}
+.issues .card{font-size:17px;line-height:1.38} .issues h3{color:var(--acc)}
+.foot{position:absolute;right:48px;bottom:12px;font-size:14px;color:var(--mute)}
+.charts{display:grid;grid-template-columns:1.05fr 1fr 1fr;gap:12px;flex:1;min-height:0}
+.charts .card{padding:8px 10px;display:flex;flex-direction:column} .charts svg{width:100%;flex:1;min-height:0}
+.charts text{fill:var(--mute);font-family:'Jost',sans-serif}
+.legend{display:flex;gap:16px;font-size:14px;margin-bottom:8px}
+@page{size:1280px 720px;margin:0}
+@media print{html{background:none}#tools{display:none}#deck{display:block;padding:0}.slide{zoom:1;border-radius:0;box-shadow:none;break-after:page;page-break-after:always}.slide:last-child{break-after:auto;page-break-after:auto}}
+</style>
+</head>
+<body>
+<div id="tools"><button onclick="window.print()">Export PDF</button></div>
+<div id="deck">
+
+<!-- 1 -->
+<section class="slide">
+  <div class="kick">01 / 07 &nbsp;·&nbsp; Introduction</div>
+  <h1>Single-shot calibration feasibility study for multi sensor rigs</h1>
+  <p style="max-width:940px;font-size:19px">We calibrate the intrinsics and extrinsics of 9 cameras and 8 LiDARs jointly against a known environment (a reference point cloud plus 3D AprilTag corners), in simulation, where the true answer is known. Then we change the scene (board count, board layout, rig motion) and see where the calibration converges and how accurate it is.</p>
+  <div class="steps">
+    <div class="step"><b>1 · SIMULATE</b>Isaac Sim: room, sensor rig and tag boards are generated from a YAML config</div>
+    <div class="step"><b>2 · EXPORT</b>IPB dataset: camera PNGs, LiDAR clouds, reference cloud, tag 3D coordinates</div>
+    <div class="step"><b>3 · INITIALISE</b>Zhang initial intrinsics from the tag planes, then initial poses</div>
+    <div class="step"><b>4 · ADJUST</b>Levenberg-Marquardt bundle adjustment: cameras, poses, tags, then LiDARs</div>
+    <div class="step"><b>5 · COMPARE</b>Error against simulator ground truth, uncertainty (err/σ), HTML report</div>
+  </div>
+  <div class="grid3" style="margin-top:6px">
+    <div class="card"><h3>Single shot</h3><p class="sm" style="margin:0">One frame: how many boards, and which layout, are enough?</p></div>
+    <div class="card"><h3>Spin</h3><p class="sm" style="margin:0">Rig rotates in place: how many positions and boards?</p></div>
+    <div class="card"><h3>Corridor drive</h3><p class="sm" style="margin:0">Straight trajectory: does motion alone give enough views?</p></div>
+  </div>
+  <div class="kpis" style="margin-top:auto">
+    <div class="kpi"><b id="k-n">–</b>experiments run</div>
+    <div class="kpi"><b id="k-ok">–</b>converged</div>
+    <div class="kpi"><b>3</b>modalities: single shot · spin · corridor drive</div>
+    <div class="kpi"><b>2</b>rigs: 10 m and 5 m long</div>
+  </div>
+</section>
+
+<!-- 2 -->
+<section class="slide">
+  <div class="kick">02 / 07 &nbsp;·&nbsp; Generated assets</div>
+  <h2>Boards, room and sensor rigs are all generated</h2>
+  <div class="row">
+    <div class="col" style="flex:1.05">
+      <div class="card"><h3>Tag boards</h3>
+        <div style="display:flex;gap:12px;align-items:center"><img id="im-board" alt="Tag board plate with one AprilTag" style="width:112px"><img id="im-tagset" alt="Tag-set: 3 by 3 plates forming one rigid plane" style="width:150px"></div>
+        <ul class="sm"><li><code>generate_boards.py</code> writes USDZ plates with tag36h11 tags (300 A3, 140 large, 1 m).</li>
+        <li>Plate = tag·10/8: A3 = 0.30 m plate / 0.24 m tag, big = 0.9 m / 0.72 m.</li>
+        <li><b>Tag-set</b> = 3×3 plates, no gap: 0.9×0.9 m, 9 tags on one rigid plane.</li></ul>
+      </div>
+      <div class="card"><h3>Room</h3>
+        <ul class="sm"><li>Floor + 4 walls from <code>room:</code> in the config (distance, height, colour); daytime sky.</li>
+        <li>Sizes used: 20×20×8 m, 10×10×3 m, and a corridor room with 5 m openings in two walls.</li>
+        <li>Boards are placed by position + normal; a generator drops plates whose image boxes overlap another plane in any camera.</li></ul>
+      </div>
+    </div>
+    <div class="col" style="flex:1.1">
+      <div class="card" style="padding:6px 10px"><img id="im-rig10" alt="10 m rig: top and side view with camera directions and LiDAR positions" style="max-height:238px;margin:0 auto"></div>
+      <div class="card" style="padding:6px 10px"><img id="im-rig5" alt="5 m rig: top and side view with camera directions and LiDAR positions" style="max-height:238px;margin:0 auto"></div>
+    </div>
+  </div>
+  <div class="cap">Rig plots: top view with camera viewing directions (blue ● = camera, orange ■ = LiDAR) and side view with heights. Cameras: 2880×1860, f = 831 px, pinhole; LiDARs: 4 OS1 (128 ch) at the corners, 4 XT32 on the axes.</div>
+</section>
+
+<!-- 3 -->
+<section class="slide">
+  <div class="kick">03 / 07 &nbsp;·&nbsp; Scenes and board locations</div>
+  <h2>Three ways to move the rig, many ways to place boards</h2>
+  <div class="grid3" style="flex:1;min-height:0">
+    <div class="card"><img id="im-lay_spin" alt="Board layout for the spin scene" style="height:350px;margin:0 auto"><h3 style="color:var(--spin-ink);margin-top:6px">Spin</h3>
+      <p>Rig turns in place (12 or 36 yaw steps); every camera sees the walls at many orientations. Boards on 4 walls + floor, 4–100 per face.</p></div>
+    <div class="card"><img id="im-lay_corr" alt="Board layout for the corridor scene" style="height:350px;margin:0 auto"><h3 style="color:var(--traj-ink);margin-top:6px">Corridor / trajectory</h3>
+      <p>Rig drives a straight line through a corridor (26 frames), later a 7-frame line or 45° arc. Boards on walls, corner planes and free chevrons.</p></div>
+    <div class="card"><img id="im-lay_single" alt="Board layout for the single-shot scene" style="height:350px;margin:0 auto"><h3 style="color:var(--acc);margin-top:6px">Single shot</h3>
+      <p>One frame only. Multi-tag panels in front of each camera, floor groups and near tilted groups replace the missing rotation.</p></div>
+  </div>
+  <div class="cap"><span class="dot" style="background:#2f6fdb"></span>wall / standing boards (side view of the plate) &nbsp; <span class="dot" style="background:#1f9d6a"></span>floor boards &nbsp; <span class="dot" style="background:#c0392b"></span>cameras &nbsp; <span class="dot" style="background:#e07b24"></span>LiDARs &nbsp; Board counts per scene range from 5 to 300; I2 uses 28 tag-sets (252 plates).</div>
+</section>
+
+<!-- 4 -->
+<section class="slide">
+  <div class="kick">04 / 07 &nbsp;·&nbsp; Sample images and point clouds</div>
+  <h2>What the calibration sees (single shot I2)</h2>
+  <div class="grid3" id="samples"></div>
+  <div class="row" style="margin-top:12px">
+    <div class="card" style="flex:2"><img id="im-cloud_ref" alt="Reference point cloud (TLS-like map)" style="margin:0 auto;max-height:230px"></div>
+    <div class="card" style="flex:1"><img id="im-cloud_lid" alt="All 8 LiDARs after calibration, overlaid on the same walls" style="margin:0 auto;max-height:230px"></div>
+  </div>
+  <div class="cap">Left to right: raw camera_north image; the same image with the calibrated LiDAR points projected onto it; camera_corner_ne with detected tag corners vs reprojected corners (error ×50). The reference cloud is the TLS-like map; the right plot shows all 8 LiDARs landing on the same walls after calibration.</div>
+</section>
+
+<!-- 5 -->
+<section class="slide">
+  <div class="kick">05 / 07 &nbsp;·&nbsp; Issues found</div>
+  <h2>What breaks a calibration, and what fixed it</h2>
+  <div class="issues">
+    <div class="card"><h3>Initialisation is the cliff</h3><p>Failures are almost never the bundle adjustment: Zhang's initial focal length needs ≈ 6+ tags on one plane per camera (2 tags crash <code>calibrateCamera</code>, 3–4 give f from 300 to 250 000 px). Minimum ≈ 50–60 boards for single shots, 25 for a spin.</p></div>
+    <div class="card"><h3>Parallel planes and pure translation</h3><p>A straight corridor drive shows each camera only parallel walls: f degenerates (1e5). Pooling the same plane over frames was also wrong; the init now takes views round-robin over distinct planes (init f 573–1185 → 773–838 px).</p></div>
+    <div class="card"><h3>Symmetry kills the spin</h3><p>Square room and 90°-symmetric rig: spins of 4, 2 or 1 positions always fail (f 2.6e5) for every board count; 3, 6, 9, 12 positions work.</p></div>
+    <div class="card"><h3>Focal length vs depth</h3><p>One viewpoint cannot separate f from distance along the optical axis: translation errors along the view axis, err/σ &gt; 3. Closer boards and tilted near groups (G2) halve it; without them the large room does not converge.</p></div>
+    <div class="card"><h3>Solver stability</h3><p>Undamped Gauss-Newton diverged (singular matrix). Fix: Levenberg-Marquardt with reverted bad steps, cameras first, LiDARs added after. Gauge is fixed by a prior on camera 0, so σ is reported relative to it.</p></div>
+    <div class="card"><h3>Simulation caveats</h3><p>Overlapping boards bias detected corners; floor and ceiling tags are not seen from 2 m (floor visible only beyond ≈ 2.1 m); the reference cloud is built from the same scans, so LiDAR numbers are optimistic; Isaac Kit sometimes hangs at start-up (watchdog retries).</p></div>
+  </div>
+</section>
+
+<!-- 6 -->
+<section class="slide">
+  <div class="kick">06 / 07 &nbsp;·&nbsp; Results</div>
+  <h2>Best result for each modality</h2>
+  <div class="card"><table id="best"></table></div>
+  <div class="grid3" id="mini" style="grid-template-columns:repeat(4,1fr);margin-top:12px"></div>
+  <div class="grid3" style="margin-top:12px">
+    <div class="card"><h3 style="color:var(--acc)">Single shot needs designed targets</h3><p class="sm">~30 multi-tag panels (139 tags) with near tilted groups reach 2–3 mm / 0.5 px in a small room; plain boards need ≈ 50–60 and converge at 5–15 mm.</p></div>
+    <div class="card"><h3 style="color:var(--spin-ink)">Spin is the most accurate</h3><p class="sm">Minimum ≈ 25 A3 boards and 3 positions 120° apart (6 is safe); cameras within 1–6 mm, f within 0.1–0.8 px. Avoid 90° multiples.</p></div>
+    <div class="card"><h3 style="color:var(--traj-ink)">Corridor needs rotation or panels</h3><p class="sm" id="corr-note"></p></div>
+  </div>
+  <div class="cap" style="margin-top:8px">Best = lowest overall ranking score within the modality (mean normalised rank over 12 error metrics; 0 best, 1 worst). Errors are against simulator ground truth; err/σ ≲ 3 = inside the predicted precision. All <span id="k-all">134</span> runs and per-metric charts: <code>index.html</code>.</div>
+</section>
+
+<!-- 7 -->
+<section class="slide">
+  <div class="kick">07 / 07 &nbsp;·&nbsp; Result graphs</div>
+  <h2>Spins win on accuracy, single shots win on effort</h2>
+  <div class="legend"><span><span class="dot" style="background:var(--single)"></span>single shot</span><span><span class="dot" style="background:var(--spin)"></span>spin</span><span><span class="dot" style="background:var(--trajectory)"></span>corridor / trajectory</span><span class="mute">only converged runs</span></div>
+  <div class="charts">
+    <div class="card"><svg id="c-rank" viewBox="0 0 400 400"></svg></div>
+    <div class="card"><svg id="c-cam" viewBox="0 0 330 400"></svg></div>
+    <div class="card"><svg id="c-f" viewBox="0 0 330 400"></svg></div>
+  </div>
+  <div class="cap" style="margin-top:8px">Takeaways: once a scene converges, accuracy depends far more on how many different views each camera gets than on the number of boards; fewer boards cost precision slowly, the real cliff is convergence of the initialisation. Spin (6+ non-symmetric positions) gives sub-5 mm cameras; designed multi-tag single shots reach 2–8 mm.</div>
+</section>
+
+</div>
+<script>
+const IMG = /*IMG*/{};
+const ROWS = /*ROWS*/[];
+const $ = s => document.querySelector(s);
+const MODN = { single: 'Single shot', spin: 'Spin', trajectory: 'Corridor / trajectory' }, MC = { single: '#2f6fdb', spin: '#1f9d6a', trajectory: '#e07b24' };
+const f = (v, d = 2) => v == null ? '–' : Number(v).toFixed(d);
+for (const [k, v] of Object.entries(IMG)) { const e = document.getElementById('im-' + k); if (e) e.src = v; }
+(IMG.samples || []).forEach(u => { const c = document.createElement('div'); c.className = 'card'; c.innerHTML = `<img src="${u}" alt="Sample camera or LiDAR view" style="width:100%">`; $('#samples').append(c); });
+const ok = ROWS.filter(r => r.ok);
+$('#k-n').textContent = $('#k-all').textContent = ROWS.length; $('#k-ok').textContent = ok.length;
+
+// zoom slides to the window width on screen
+const fit = () => document.documentElement.style.setProperty('--s', Math.min(1, (innerWidth - 24) / 1280));
+fit(); addEventListener('resize', fit);
+
+// best per modality
+(function () {
+  let h = '<tr><th>Modality</th><th>Experiment</th><th>boards</th><th>frames</th><th>reproj [px]</th><th>f err [px]</th><th>cam t mean/max [mm]</th><th>LiDAR t max [mm]</th><th>cam rot max [°]</th><th>err/σ max</th><th>score</th></tr>';
+  for (const m of ['single', 'spin', 'trajectory']) {
+    const b = ok.filter(r => r.mod === m).sort((a, c) => a.score - c.score)[0]; if (!b) continue;
+    h += `<tr><td><span class="dot" style="background:${MC[m]}"></span>${MODN[m]}</td><td>${b.title}</td><td>${b.boards}</td><td>${b.frames}</td><td>${f(b.reproj, 3)}</td><td>${f(b.f_mean)}</td><td>${f(b.cam_t_mean, 1)} / ${f(b.cam_t_max, 1)}</td><td>${f(b.lid_t_max, 1)}</td><td>${f(b.cam_rot_max, 3)}</td><td>${f(b.err_sigma_max, 1)}</td><td>${f(b.score, 3)}</td></tr>`;
+  }
+  $('#best').innerHTML = h;
+  const bs = ['single', 'spin', 'trajectory'].map(m => ok.filter(r => r.mod === m).sort((a, c) => a.score - c.score)[0]).filter(Boolean);
+  [['cam_t_max', 'camera t error, max [mm]'], ['lid_t_max', 'LiDAR t error, max [mm]'], ['f_mean', 'focal length error [px]'], ['err_sigma_max', 'err/σ, max']].forEach(([k, t]) => {
+    const mx = (Math.max(...bs.map(r => r[k])) * 1.25) || 1, c = document.createElement('div'); c.className = 'card'; c.style.padding = '8px 12px';
+    c.innerHTML = `<div class="sm" style="font-weight:500">${t}</div><svg viewBox="0 0 260 96" style="width:100%">` + bs.map((r, i) => `<rect x="70" y="${6 + i * 29}" width="${r[k] / mx * 150}" height="22" rx="3" fill="${MC[r.mod]}"/><text x="66" y="${22 + i * 29}" text-anchor="end" font-size="12" style="fill:var(--mute)">${MODN[r.mod].split(' ')[0]}</text><text x="${74 + r[k] / mx * 150}" y="${22 + i * 29}" font-size="13">${f(r[k], r[k] < 10 ? 2 : 1)}</text>`).join('') + '</svg>';
+    $('#mini').append(c);
+  });
+  const tr = ROWS.filter(r => r.mod === 'trajectory');
+  if (!tr.length) return;
+  const bad = tr.filter(r => !r.ok), good = tr.filter(r => r.ok);
+  $('#corr-note').innerHTML = `${bad.length} of ${tr.length} runs failed (${bad.map(r => r.exp).join(', ')}): a plain straight drive shows only parallel walls, so the initial focal length is degenerate. The ${good.length} that converged (G, line and 45° arc) add multi-tag panels; the arc, which rotates the rig, is best.`;
+})();
+
+// charts
+const svgEl = (t, a, txt) => { const e = document.createElementNS('http://www.w3.org/2000/svg', t); for (const k in a) e.setAttribute(k, a[k]); if (txt != null) e.textContent = txt; return e; };
+(function () { // ranking bars: top 14
+  const s = $('#c-rank'), top = ok.slice().sort((a, b) => a.score - b.score).slice(0, 14), L = 150, W = 400;
+  s.append(svgEl('text', { x: 4, y: 14, 'font-size': 15, style: 'fill:var(--ink)' }, 'Overall ranking score, best 14 (0 = best)'));
+  top.forEach((r, i) => { const y = 34 + i * 26, w = r.score / .5 * (W - L - 40);
+    s.append(svgEl('text', { x: L - 4, y: y + 14, 'text-anchor': 'end', 'font-size': 13 }, `${r.exp} · ${r.boards} bd`));
+    s.append(svgEl('rect', { x: L, y, width: w, height: 19, fill: MC[r.mod], rx: 2 }));
+    s.append(svgEl('text', { x: L + w + 4, y: y + 14, 'font-size': 13 }, f(r.score, 2))); });
+})();
+function scatter(id, key, title, unit) {
+  const s = $(id), pts = ok.filter(r => r[key] > 0 && r.boards > 0); if (!pts.length) return;
+  const W = 330, H = 400, L = 46, B = 40, T = 48, R = 12;
+  const xs = pts.map(r => Math.log10(r.boards)), ys = pts.map(r => Math.log10(r[key])), x0 = Math.floor(Math.min(...xs)), x1 = Math.max(Math.ceil(Math.max(...xs)), x0 + 1), y0 = Math.floor(Math.min(...ys)), y1 = Math.max(Math.ceil(Math.max(...ys)), y0 + 1);
+  const X = v => L + (Math.log10(v) - x0) / (x1 - x0) * (W - L - R), Y = v => H - B - (Math.log10(v) - y0) / (y1 - y0) * (H - B - T);
+  s.append(svgEl('text', { x: 4, y: 14, 'font-size': 15, style: 'fill:var(--ink)' }, title));
+  for (let e = y0; e <= y1; e++) { s.append(svgEl('line', { x1: L, x2: W - R, y1: Y(10 ** e), y2: Y(10 ** e), stroke: 'rgba(27,36,48,.15)' })); s.append(svgEl('text', { x: L - 4, y: Y(10 ** e) + 3, 'text-anchor': 'end', 'font-size': 12 }, 10 ** e)); }
+  for (let e = x0; e <= x1; e++) { s.append(svgEl('line', { x1: X(10 ** e), x2: X(10 ** e), y1: T, y2: H - B, stroke: 'rgba(27,36,48,.15)' })); s.append(svgEl('text', { x: X(10 ** e), y: H - B + 14, 'text-anchor': 'middle', 'font-size': 12 }, 10 ** e)); }
+  s.append(svgEl('text', { x: (L + W) / 2, y: H - 6, 'text-anchor': 'middle', 'font-size': 13 }, 'boards in the scene (log)'));
+  s.append(svgEl('text', { x: 4, y: 32, 'font-size': 12 }, unit));
+  pts.forEach(r => { const c = svgEl('circle', { cx: X(r.boards), cy: Y(r[key]), r: 5, fill: MC[r.mod], 'fill-opacity': .72, stroke: '#fff', 'stroke-width': .6 }); c.append(svgEl('title', {}, `${r.title}: ${f(r[key], 2)}`)); s.append(c); });
+}
+scatter('#c-cam', 'cam_t_max', 'Camera translation error vs boards', 'max over cameras [mm]');
+scatter('#c-f', 'f_mean', 'Focal length error vs boards', 'mean over cameras [px]');
+</script>
+</body>
+</html>
