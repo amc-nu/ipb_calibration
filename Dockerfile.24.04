@@ -39,6 +39,7 @@ RUN pip --no-cache-dir install ipdb
 WORKDIR /root/calib
 COPY scripts ./scripts
 COPY src ./src
+COPY templates ./templates
 COPY pyproject.toml .
 RUN pip --no-cache-dir install -e .
 

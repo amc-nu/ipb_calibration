@@ -17,3 +17,6 @@ dependencies = [
     "argparse",
     "tifffile"
 ]
+
+[project.optional-dependencies]
+rosbag = ["rosbags"]  # scripts/rosbag_to_calibration.py

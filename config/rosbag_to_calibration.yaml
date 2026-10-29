@@ -1,0 +1,17 @@
+bag: /path/to/bag_dir            # ROS2 bag directory (sqlite3 or mcap)
+output: input                    # written: calibration.yaml + one folder per sensor (named from header frame_id)
+tf_static_topic: /tf_static
+point_format: PointXYZIR         # PointXYZIR | PointXYZIRADT; per LiDAR override with `point_format`
+every_n: 1                       # use every n-th image of the first camera (reference camera = cam0)
+max_sync_dt: 0.05                # [s] max |stamp difference| of any sensor to the reference image, else the pose is dropped
+max_poses: 64                    # optional; subsample evenly
+use_header_stamp: true           # false = bag receive time
+cameras:                         # first entry = camera 0
+  - image_topic: /sensing/camera/camera0/image_raw/compressed
+    info_topic: /sensing/camera/camera0/camera_info
+  - image_topic: /sensing/camera/camera1/image_raw/compressed
+    info_topic: /sensing/camera/camera1/camera_info
+lidars:
+  - topic: /sensing/lidar/top/pointcloud_raw
+  - topic: /sensing/lidar/left/pointcloud_raw
+    point_format: PointXYZIRADT

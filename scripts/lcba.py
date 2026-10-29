@@ -9,6 +9,7 @@ import click
 from os.path import join
 from ipb_calibration import ipb_preprocessing as pp
 from ipb_calibration.export import export_verification
+from ipb_calibration.run_report import make_run_report
 from ipb_calibration.diagnostics import check_data
 from ipb_calibration.gt_report import gt_report
 from ipb_calibration.metrics import compute_metrics, metrics_report, MEANINGS
@@ -132,7 +133,7 @@ def main(apriltag_file,
     check_data(lcba, img_sizes, join(path_out, "data_report.txt"))
 
     if export:
-        export_verification(lcba, path_data, join(path_out, "verification"))
+        world = export_verification(lcba, path_data, join(path_out, "verification"))
 
     # last, so it ends the tee'd log
     report = metrics_report(results["metrics"])
@@ -142,6 +143,8 @@ def main(apriltag_file,
     print(report)
     with open(join(path_out, "report.txt"), "w") as f:
         f.write(report)
+    if export:
+        make_run_report(lcba, results, world, join(path_out, "verification"), path_out, experiment_name, config, report)
 
 
 if __name__ == "__main__":

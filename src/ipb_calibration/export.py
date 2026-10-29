@@ -65,20 +65,20 @@ def export_verification(lcba, path_data, path_out):
       - <camera>/<image>_proj.png: every image with the LiDAR scan of the same
         pose projected into it (colored by depth)
       - <camera>/<image>_reproj.png: detected vs. projected tag corners
-    Uses the full (non-downsampled) scans from path_data.
+    Uses the full (non-downsampled) scans from path_data. Returns {lidar name: [scan per pose in the world frame]}.
     """
     path_out = Path(path_out)
     path_out.mkdir(parents=True, exist_ok=True)
     cfg = lcba.cfg
 
     # world-frame scans per lidar: list over poses
-    world = []
+    world = {}
     for topic, lidar in zip(cfg.get("point_cloud_topics", [])[:lcba.num_lidar], lcba.lidars if lcba.num_lidar else []):
         name = topic.replace("/", "")
         files = sorted(glob.glob(join(path_data, name, "*.npy")))
         scans = [lidar.scan2world(np.asarray(load_scan(f).points), lcba.T_cam_map[t])
                  for t, f in enumerate(files[:lcba.num_poses])]
-        world.append(scans)
+        world[name] = scans
 
         cmap = plt.get_cmap("viridis")
         pts = np.concatenate(scans)
@@ -99,8 +99,9 @@ def export_verification(lcba, path_data, path_out):
                 cv2.imwrite(str(path_out / name / (basename(f)[:-4] + "_reproj.png")),
                             _reproj_overlay(img.copy(), p_det, p_proj))
             if world:
-                for scans in world:
+                for scans in world.values():
                     if t < len(scans):
                         img = _overlay(img, cam, scans[t], lcba.T_cam_map[t])
                 cv2.imwrite(str(path_out / name / (basename(f)[:-4] + "_proj.png")), img)
     print(f"Verification export written to {path_out}")
+    return world
