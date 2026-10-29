@@ -85,20 +85,20 @@ def _tables(results):
     rows = []
     for k in cams:
         s, g = m[k]["reprojection_px"], m[k]["sigma"]
-        rows.append([short(k), s["n"], f"{s['rmse']:.3f}", f"{s['mean']:.3f}", f"{s['median']:.3f}", f"{s['p95']:.3f}", f"{s['max']:.3f}",
+        rows.append([short(k), f"{s['n']:,}", f"{s['rmse']:.3f}", f"{s['mean']:.3f}", f"{s['median']:.3f}", f"{s['p95']:.3f}", f"{s['max']:.3f}",
                      "  ".join(f"{t}:{e:.2f}" for t, e in m[k]["worst_frames"][:3])])
     cam_metrics = _table(["camera", "corners", "RMSE [px]", "mean", "median", "p95", "max", "worst frames (frame:RMSE)"], rows)
     rows = []
     for k in lids:
         s, wf = m[k]["point_to_plane_m"], m[k]["inlier_ratio_worst_frame"]
-        rows.append([k.replace("lidar_", ""), s["n"], f"{s['rmse'] * 1e3:.2f}", f"{s['median'] * 1e3:.2f}", f"{s['p95'] * 1e3:.2f}",
+        rows.append([k.replace("lidar_", ""), f"{s['n']:,}", f"{s['rmse'] * 1e3:.2f}", f"{s['median'] * 1e3:.2f}", f"{s['p95'] * 1e3:.2f}",
                      f"{m[k]['inlier_ratio']:.3f}", f"{wf[0]}: {wf[1]:.3f}"])
     lid_metrics = _table(["LiDAR", "points", "RMSE [mm]", "median", "p95", "inlier ratio", "worst frame"], rows)
 
     rows = []
     for k in cams:
         K, d, g = np.asarray(results[k]["K"]), results[k]["distortion_coeff"], m[k]["sigma"]["cx_cy_fx_fy_px"]
-        rows.append([short(k), "pinhole" if results[k]["is_pinhole"] else "fisheye", f"{K[0, 0]:.2f}", f"{K[1, 1]:.2f}", f"{K[0, 2]:.2f}", f"{K[1, 2]:.2f}",
+        rows.append([short(k), "pinhole" if results[k]["is_pinhole"] else "fisheye", f"{K[0, 0]:,.2f}", f"{K[1, 1]:,.2f}", f"{K[0, 2]:,.2f}", f"{K[1, 2]:,.2f}",
                      f"{g[2]:.2f} / {g[3]:.2f}", f"{g[0]:.2f} / {g[1]:.2f}", " ".join(f"{x:.4g}" for x in d)])
     intr = _table(["camera", "model", "fx [px]", "fy [px]", "cx [px]", "cy [px]", "σ fx / fy [px]", "σ cx / cy [px]", "distortion (k1 k2 p1 p2 k3 …)"], rows)
 
@@ -161,7 +161,7 @@ def make_run_report(lcba, results, world, verif_dir, path_out, experiment_name, 
     data = dict(cams=cams, frames=frames, clouds=_clouds(lcba, world) if world else None)
     fill = dict(
         name=escape(experiment_name), date=datetime.now().strftime("%Y-%m-%d %H:%M"),
-        n_cam=lcba.num_cameras, n_lid=lcba.num_lidar, n_pose=lcba.num_poses, n_tags=len(lcba.apriltag_coords) // 4, n_corners=corners, n_lid_pts=lid_pts,
+        n_cam=lcba.num_cameras, n_lid=lcba.num_lidar, n_pose=f"{lcba.num_poses:,}", n_tags=f"{len(lcba.apriltag_coords) // 4:,}", n_corners=f"{corners:,}", n_lid_pts=f"{lid_pts:,}",
         reproj=f"{np.sqrt(sum(m[k]['reprojection_px']['rmse'] ** 2 * m[k]['reprojection_px']['n'] for k in results if k.startswith('camera')) / corners):.3f}",
         p2p=f"{p2p['rmse'] * 1e3:.2f} mm" if p2p else "–", s0c=f"{m['sigma0']['cameras']:.2f}", s0l=f"{m['sigma0']['lidars']:.2f}",
         params=escape(f"tag family {config['tag_family']} · std_pix {config['std_pix']} px · std_apriltags {config['std_apriltags']} m · std_lidar {config['std_lidar']} m · "

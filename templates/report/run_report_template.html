@@ -7,56 +7,51 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
-:root{--ink:#1b2430;--mute:#334050;--acc:#2358c2;--card:rgba(255,255,255,.62);--line:rgba(27,36,48,.14);--ok:#1f8a4c;--bad:#c4362f;--single:#2f6fdb;--spin:#1f9d6a;--trajectory:#e07b24;--spin-ink:#12704a;--traj-ink:#a24b08}
+:root{--ink:#1b2430;--mute:#334050;--acc:#2358c2;--acc-deep:#1c47a0;--card:rgba(255,255,255,.62);--line:rgba(27,36,48,.14);
+  --sp-1:8px;--sp-2:12px;--sp-3:16px;--sp-4:24px;--sp-5:32px;--r-card:12px;--r-ctl:8px}
 *{box-sizing:border-box}
 html{background:#92B0E8;background:radial-gradient(at left bottom,#92B0E8 2%,#EEEEEE 100%);background-attachment:fixed}
-body{margin:0;font-family:'Jost',system-ui,sans-serif;color:var(--ink);font-size:17px;line-height:1.35;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-#tools{position:fixed;top:12px;right:16px;z-index:9}
-#tools button{font:500 15px 'Jost',system-ui,sans-serif;background:var(--acc);color:#fff;border:0;border-radius:8px;padding:9px 16px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.2)}
-#tools button:hover{background:#1c47a0}
-#tools button:focus-visible,a:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+body{margin:0;font-family:'Jost',system-ui,sans-serif;color:var(--ink);font-size:17px;line-height:1.4;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 ::selection{background:rgba(35,88,194,.28)}
-#deck{display:flex;flex-direction:column;align-items:center;gap:20px;padding:20px 0 40px}
-.slide{width:1280px;height:720px;flex:none;position:relative;overflow:hidden;padding:34px 48px 30px;zoom:var(--s,1);
-  background:#92B0E8;background:radial-gradient(at left bottom,#92B0E8 2%,#EEEEEE 100%);border-radius:14px;box-shadow:0 6px 28px rgba(27,36,48,.22);display:flex;flex-direction:column}
-.kick{font-size:14px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);font-weight:500}
-h1{text-wrap:balance;font-size:46px;line-height:1.05;margin:6px 0 10px;font-weight:600}
-h2{text-wrap:balance;font-size:32px;margin:2px 0 14px;font-weight:600}
-h3{font-size:18px;margin:0 0 6px;font-weight:600}
-p{margin:0 0 8px;text-wrap:pretty} code{font-size:.9em;background:rgba(27,36,48,.07);padding:0 4px;border-radius:4px} .mute{color:var(--mute)} .sm{font-size:14px}
-.row{display:flex;gap:16px;flex:1;min-height:0} .col{display:flex;flex-direction:column;gap:12px;min-width:0}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
-.card img{display:block;max-width:100%} ul{margin:4px 0 0;padding-left:18px} li{margin-bottom:4px}
-.cap{font-size:14px;color:var(--mute);margin-top:4px}
-.steps{display:flex;gap:10px;align-items:stretch;margin:6px 0 14px}
-.step{flex:1;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;position:relative}
-.step b{display:block;font-size:14px;color:var(--acc);letter-spacing:.08em}
-.step:not(:last-child):after{content:'\2192';position:absolute;right:-13px;top:38%;font-size:18px;color:var(--mute);z-index:2}
-.kpis{display:flex;gap:12px} .kpi{flex:1;text-align:center;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px}
-.kpi b{display:block;font-size:34px;font-weight:600;color:var(--acc)}
-table{border-collapse:collapse;width:100%;font-size:16px;font-variant-numeric:tabular-nums}
-th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:right} th{color:var(--mute);font-weight:500;font-size:14px}
+:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+#tools{position:fixed;top:var(--sp-2);right:var(--sp-3);z-index:9}
+#tools button{font:500 15px 'Jost',system-ui,sans-serif;background:var(--acc);color:#fff;border:0;border-radius:var(--r-ctl);padding:10px 16px;min-height:40px;cursor:pointer;box-shadow:0 2px 8px rgba(27,36,48,.22)}
+#tools button:hover{background:var(--acc-deep)}
+#deck{display:flex;flex-direction:column;align-items:center;gap:var(--sp-5);padding:var(--sp-5) var(--sp-3)}
+/* one vertical rhythm: every slide child is separated by the same gap, no per-element margins */
+.slide{width:100%;max-width:1280px;min-width:0;position:relative;overflow:hidden;padding:clamp(16px,3vw,32px) clamp(16px,4vw,48px) clamp(20px,3vw,40px);display:flex;flex-direction:column;gap:var(--sp-3);
+  background:#92B0E8;background:radial-gradient(at left bottom,#92B0E8 2%,#EEEEEE 100%);border-radius:14px;box-shadow:0 6px 28px rgba(27,36,48,.22)}
+h1{text-wrap:balance;overflow-wrap:anywhere;font-size:clamp(30px,4.5vw,46px);line-height:1.1;margin:0;font-weight:600}
+h2{text-wrap:balance;font-size:clamp(24px,3.2vw,32px);line-height:1.15;margin:0;font-weight:600}
+h3{font-size:18px;margin:0 0 var(--sp-1);font-weight:600}
+p{margin:0;text-wrap:pretty;max-width:75ch} .mute{color:var(--mute)} .sm{font-size:14px}
+.row{display:flex;flex-wrap:wrap;gap:var(--sp-3);align-items:stretch} .row>*{min-width:0;flex:1 1 360px}
+.card.sm{overflow-x:auto} .card{min-width:0;background:var(--card);border:1px solid var(--line);border-radius:var(--r-card);padding:var(--sp-2) var(--sp-3)}
+.card img{display:block;max-width:100%} .card img.rig{max-height:520px}
+.cap{font-size:14px;color:var(--mute);max-width:110ch}
+.meta{font-size:14px;color:var(--mute);font-variant-numeric:tabular-nums}
+.kpis{display:flex;flex-wrap:wrap;gap:var(--sp-2)} .kpi{flex:1 1 150px;text-align:center;background:var(--card);border:1px solid var(--line);border-radius:var(--r-card);padding:var(--sp-2) var(--sp-1)}
+.kpi b{display:block;font-size:30px;line-height:1.2;font-weight:600;color:var(--acc);font-variant-numeric:tabular-nums}
+table{border-collapse:collapse;width:100%;font-size:14px;font-variant-numeric:tabular-nums}
+th,td{white-space:nowrap;padding:7px 10px;border-bottom:1px solid var(--line);text-align:right} th{color:var(--mute);font-weight:500}
+tbody tr:last-child td{border-bottom:0}
 th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}
-.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
-.imgs{display:grid;gap:10px}
-.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
-.issues{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;flex:1}
-.issues .card{font-size:17px;line-height:1.38} .issues h3{color:var(--acc)}
-.foot{position:absolute;right:48px;bottom:12px;font-size:14px;color:var(--mute)}
-.charts{display:grid;grid-template-columns:1.05fr 1fr 1fr;gap:12px;flex:1;min-height:0}
-.charts .card{padding:8px 10px;display:flex;flex-direction:column} .charts svg{width:100%;flex:1;min-height:0}
-.charts text{fill:var(--mute);font-family:'Jost',sans-serif}
-.legend{display:flex;gap:16px;font-size:14px;margin-bottom:8px}
-@page{size:1280px 720px;margin:0}
-@media print{html{background:none}#tools{display:none}#deck{display:block;padding:0}.slide{zoom:1;border-radius:0;box-shadow:none;break-after:page;page-break-after:always}.slide:last-child{break-after:auto;page-break-after:auto}}
-.kpis{flex-wrap:wrap} .kpi b{font-size:30px}
-.tabs{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
-.tabs button,.tabs select{font:500 14px 'Jost',system-ui,sans-serif;background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 12px;cursor:pointer}
-.tabs button.on{background:var(--acc);color:#fff} .tabs input[type=range]{width:240px}
-.shots{display:grid;grid-template-columns:1fr 1fr;gap:10px;flex:1;min-height:0} .shots figure{margin:0;min-height:0} .shots img{width:100%;border-radius:8px;display:block}
-#gl{flex:1;min-height:0;border-radius:10px;overflow:hidden;background:#0d1117}
-pre{font:11px/1.3 ui-monospace,Menlo,monospace;margin:0;white-space:pre}
-.sm table{font-size:13px} table{font-size:14px} th,td{padding:4px 6px}
+.tabs{display:flex;gap:var(--sp-1);align-items:center;flex-wrap:wrap}
+.tabs button,.tabs select{font:500 14px 'Jost',system-ui,sans-serif;background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:var(--r-ctl);padding:6px 12px;min-height:36px;cursor:pointer}
+.tabs button:hover,.tabs select:hover{background:rgba(255,255,255,.85)}
+.tabs button.on{background:var(--acc);color:#fff;border-color:var(--acc)} .tabs input[type=range]{width:min(240px,100%);accent-color:var(--acc)}
+.tabs label{display:inline-flex;align-items:center;gap:4px;min-height:36px;padding:0 var(--sp-1)}
+.shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:var(--sp-2)} .shots figure{margin:0} .shots img{width:100%;border-radius:var(--r-ctl);display:block}
+#gl{height:clamp(320px,55vw,560px);border-radius:var(--r-ctl);overflow:hidden;background:#0d1117}
+pre{font:11px/1.4 ui-monospace,Menlo,monospace;margin:0;white-space:pre}
+.row .card{max-height:600px;overflow:auto}
+@page{size:A4 landscape;margin:0}
+/* print: slides flow one after another and fill the page; only small blocks are kept whole */
+@media print{html{background:none}#tools,.tabs{display:none}#deck{display:block;padding:0}
+  .slide{max-width:none;margin:0;padding:6mm 8mm;background:none;border:0;box-shadow:none;border-radius:0}
+  .card,.kpi{background:none}
+  h1,h2{break-after:avoid} .card,.kpi,figure,tr{break-inside:avoid}
+  #gl{height:300px} .card img.rig{max-height:270px} .row .card{max-height:none;overflow:visible} .card.sm{overflow:visible} pre{white-space:pre-wrap;font-size:9px}}
 </style>
 </head>
 <body>
@@ -64,45 +59,40 @@ pre{font:11px/1.3 ui-monospace,Menlo,monospace;margin:0;white-space:pre}
 <div id="deck">
 
 <section class="slide">
-  <div class="kick">Calibration report &nbsp;·&nbsp; {{date}}</div>
   <h1>{{name}}</h1>
-  <p class="mute" style="font-size:18px">Joint intrinsic / extrinsic calibration of {{n_cam}} cameras and {{n_lid}} LiDARs against the reference point cloud and AprilTag coordinates. No ground truth: quality is judged from reprojection, point-to-plane, consistency and the estimated uncertainty.</p>
-  <div class="kpis" style="margin:14px 0"><div class="kpi"><b>{{n_cam}}</b>cameras</div><div class="kpi"><b>{{n_lid}}</b>LiDARs</div><div class="kpi"><b>{{n_pose}}</b>poses (frames)</div><div class="kpi"><b>{{n_tags}}</b>tags detected</div><div class="kpi"><b>{{n_corners}}</b>corner observations</div><div class="kpi"><b>{{n_lid_pts}}</b>LiDAR points used</div></div>
+  <div class="meta">Calibration report · {{date}}</div>
+  <p class="mute">Joint intrinsic / extrinsic calibration of {{n_cam}} cameras and {{n_lid}} LiDARs against the reference point cloud and AprilTag coordinates. No ground truth: quality is judged from reprojection, point-to-plane, consistency and the estimated uncertainty.</p>
+  <div class="kpis"><div class="kpi"><b>{{n_cam}}</b>cameras</div><div class="kpi"><b>{{n_lid}}</b>LiDARs</div><div class="kpi"><b>{{n_pose}}</b>poses (frames)</div><div class="kpi"><b>{{n_tags}}</b>tags detected</div><div class="kpi"><b>{{n_corners}}</b>corner observations</div><div class="kpi"><b>{{n_lid_pts}}</b>LiDAR points used</div></div>
   <div class="kpis"><div class="kpi"><b>{{reproj}} px</b>reprojection RMSE (all cameras)</div><div class="kpi"><b>{{p2p}}</b>LiDAR plane-to-plane RMSE</div><div class="kpi"><b>{{s0c}}</b>σ0 cameras</div><div class="kpi"><b>{{s0l}}</b>σ0 LiDARs</div></div>
-  <div class="card" style="margin-top:auto"><h3>Settings</h3><p class="sm" style="margin:0">{{params}}</p></div>
+  <div class="card"><p class="sm"><b>Settings</b> · {{params}}</p></div>
 </section>
 
 <section class="slide">
-  <div class="kick">Sensor rig</div>
   <h2>Sensor positioning</h2>
-  <div class="card" style="flex:1;min-height:0;display:flex;justify-content:center;padding:6px"><img src="{{rig}}" alt="Top, front and side view of the sensor rig" style="max-height:100%"></div>
+  <div class="card" style="display:flex;justify-content:center"><img src="{{rig}}" class="rig" alt="Top, front and side view of the sensor rig"></div>
   <div class="cap">Estimated sensor positions at pose 0 (blue ● camera with viewing direction, orange ■ LiDAR). x forward = heading of camera 0, z = height in the reference map frame; origin = sensor centroid in x/y.</div>
 </section>
 
 <section class="slide">
-  <div class="kick">Metrics</div>
   <h2>Reprojection and LiDAR fit</h2>
   <div class="card sm">{{cam_metrics}}</div>
-  <div class="card sm" style="margin-top:12px">{{lid_metrics}}</div>
+  <div class="card sm">{{lid_metrics}}</div>
   <div class="cap">Reprojection RMSE close to the assumed std_pix and point-to-plane close to std_lidar are healthy; σ0 ≈ 1 means the assumed noise matches the data. Meanings on the last slide.</div>
 </section>
 
 <section class="slide">
-  <div class="kick">Results</div>
   <h2>Camera intrinsics</h2>
   <div class="card sm">{{intr}}</div>
   <div class="cap">σ = 1-sigma precision from the inverse normal matrix for the assumed noise levels.</div>
 </section>
 
 <section class="slide">
-  <div class="kick">Results</div>
   <h2>Extrinsics relative to camera 0</h2>
   <div class="card sm">{{extr}}</div>
   <div class="cap">Transform sensor → camera 0 frame. Roll/pitch/yaw = ZYX Euler angles of its rotation. σ are relative to camera 0.</div>
 </section>
 
 <section class="slide">
-  <div class="kick">Verification</div>
   <h2>Camera images</h2>
   <div class="tabs" id="tabs2d"></div>
   <div class="shots" id="shots"></div>
@@ -110,7 +100,6 @@ pre{font:11px/1.3 ui-monospace,Menlo,monospace;margin:0;white-space:pre}
 </section>
 
 <section class="slide">
-  <div class="kick">Verification</div>
   <h2>3D point cloud</h2>
   <div class="tabs" id="gbar"></div>
   <div id="gl"></div>
@@ -118,9 +107,8 @@ pre{font:11px/1.3 ui-monospace,Menlo,monospace;margin:0;white-space:pre}
 </section>
 
 <section class="slide">
-  <div class="kick">Reference</div>
   <h2>What the metrics mean</h2>
-  <div class="row"><div class="card" style="flex:1;overflow:auto"><pre>{{meanings}}</pre></div><div class="card" style="flex:1;overflow:auto"><pre>{{report}}</pre></div></div>
+  <div class="row"><div class="card" style="flex:1"><pre>{{meanings}}</pre></div><div class="card" style="flex:1"><pre>{{report}}</pre></div></div>
 </section>
 
 </div>
@@ -129,8 +117,6 @@ pre{font:11px/1.3 ui-monospace,Menlo,monospace;margin:0;white-space:pre}
 const D = /*DATA*/{};
 const $ = s => document.querySelector(s);
 const el = (t, a = {}, ...k) => { const e = document.createElement(t); for (const [x, y] of Object.entries(a)) x === 'class' ? e.className = y : x.startsWith('on') ? e[x] = y : e.setAttribute(x, y); e.append(...k); return e; };
-// scale slides to the window
-const fit = () => document.documentElement.style.setProperty('--s', Math.min(1, (innerWidth - 24) / 1280)); fit(); addEventListener('resize', fit);
 
 // ---- 2D images
 const st = { cam: D.cams[0], i: 0, mode: 'both' };
@@ -138,7 +124,7 @@ function draw2d() {
   const fr = D.frames[st.i], d = $('#shots'); d.innerHTML = '';
   (st.mode === 'both' ? ['proj', 'reproj'] : [st.mode]).forEach(k => d.append(el('figure', {}, el('img', { src: `images/${st.cam}/${fr}_${k}.jpg`, alt: `${st.cam} ${fr} ${k}`,
     onerror: ev => ev.target.replaceWith(el('p', { class: 'mute' }, 'not available for this frame (no detections / no LiDAR)')) }))));
-  if (st.mode !== 'both') d.style.gridTemplateColumns = '1fr';
+  d.style.gridTemplateColumns = st.mode === 'both' ? '' : '1fr';
   $('#fl').textContent = fr;
 }
 (function () {
@@ -156,10 +142,10 @@ const PAL = ['#ff5964', '#ffb140', '#ffe66d', '#7bd389', '#35c4d8', '#4d8af0', '
   const box = $('#gl'), bar = $('#gbar'), C = D.clouds;
   if (!C || !window.THREE) { box.append(el('p', { style: 'color:#ccc;padding:12px' }, 'no point cloud data')); return; }
   const lo = C.lo, hi = C.hi, names = Object.keys(C.lidars);
-  const W = () => box.clientWidth / (parseFloat(getComputedStyle(document.querySelector('.slide')).zoom) || 1), H = () => box.clientHeight;
+  const W = () => box.clientWidth, H = () => box.clientHeight;
   const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0d1117);
   const cam = new THREE.PerspectiveCamera(50, 1.8, .1, 500); cam.up.set(0, 0, 1);
-  const rr = new THREE.WebGLRenderer({ antialias: true }); box.append(rr.domElement);
+  const rr = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true }); rr.domElement.style.cssText = 'display:block;width:100%;height:100%'; box.append(rr.domElement);
   const ctl = new THREE.OrbitControls(cam, rr.domElement);
   const ctr = lo.map((v, i) => (v + hi[i]) / 2), span = Math.max(hi[0] - lo[0], hi[1] - lo[1]);
   ctl.target.set(...ctr); cam.position.set(ctr[0] + span * .6, ctr[1] - span * .8, ctr[2] + span * .5); ctl.update();
@@ -173,10 +159,10 @@ const PAL = ['#ff5964', '#ffb140', '#ffe66d', '#7bd389', '#35c4d8', '#4d8af0', '
     const m = new THREE.PointsMaterial({ size: .05, vertexColors: true }); mats.push(m); const p = new THREE.Points(g, m); p.visible = n !== 'map'; scene.add(p); groups[n] = p;
   });
   scene.add(new THREE.AxesHelper(2));
-  names.forEach((n, i) => bar.append(el('label', { style: `font-size:14px;color:${n === 'map' ? '#555' : PAL[i % PAL.length]}` }, el('input', n === 'map' ? { type: 'checkbox', onchange: ev => groups[n].visible = ev.target.checked } : { type: 'checkbox', checked: '', onchange: ev => groups[n].visible = ev.target.checked }), ' ' + n.replace('lidar_', '').replace('points', '') + ' ')));
+  names.forEach((n, i) => bar.append(el('label', {}, el('input', n === 'map' ? { type: 'checkbox', onchange: ev => groups[n].visible = ev.target.checked } : { type: 'checkbox', checked: '', onchange: ev => groups[n].visible = ev.target.checked }), el('i', { style: `width:10px;height:10px;border-radius:50%;background:${n === 'map' ? '#8a8f98' : PAL[i % PAL.length]}` }), n.replace('lidar_', '').replace('points', ''))));
   bar.append(' size ', el('input', { type: 'range', 'aria-label': 'point size', min: 1, max: 20, value: 5, oninput: ev => mats.forEach(m => m.size = ev.target.value / 100) }),
     el('button', { onclick: () => { byPose = !byPose; names.forEach(n => { const g = groups[n].geometry; g.attributes.color.array.set(byPose ? g.userData.col2 : g.userData.col); g.attributes.color.needsUpdate = true; }); } }, 'colour: LiDAR / frame'));
-  const size = () => { rr.setSize(W(), H()); cam.aspect = W() / H(); cam.updateProjectionMatrix(); };
+  const size = () => { rr.setSize(W(), H(), false); cam.aspect = W() / H(); cam.updateProjectionMatrix(); };
   size(); new ResizeObserver(size).observe(box); addEventListener('resize', size);
   (function loop() { requestAnimationFrame(loop); rr.render(scene, cam); })();
 })();
